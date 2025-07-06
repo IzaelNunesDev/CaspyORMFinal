@@ -306,7 +306,7 @@ class QuerySet:
         logger.debug(f"Executando DELETE (ASSÍNCRONO): {cql} com parâmetros: {params}")
         prepared = session.prepare(cql)
         future = session.execute_async(prepared, params)
-        await asyncio.to_thread(future.result)
+        await future
         return 0  # Cassandra não retorna número de linhas deletadas
 
     def page(self, page_size: int = 100, paging_state: Any = None):

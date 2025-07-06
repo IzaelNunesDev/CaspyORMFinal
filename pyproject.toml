@@ -168,6 +168,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--cov=caspyorm",
+    "--cov=cli",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",

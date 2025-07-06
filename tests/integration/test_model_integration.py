@@ -85,7 +85,9 @@ class TestModelIntegration:
         mock_result = Mock()
         mock_result.__iter__ = lambda s: iter(mock_result_set)
         mock_result.one.return_value = mock_row
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         found_user = await TestUser.get_async(id=mock_row.id)
         assert found_user.name == "João"
@@ -149,7 +151,9 @@ class TestModelIntegration:
         mock_result_set = [mock_row1, mock_row2]
         mock_result = Mock()
         mock_result.__iter__ = lambda s: iter(mock_result_set)
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         # Teste filter
         users = await TestUser.filter(active=True).all_async()
@@ -179,7 +183,9 @@ class TestModelIntegration:
         mock_row = Mock()
         mock_row.count = 42
         mock_result.one.return_value = mock_row
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         # Teste count
         count = await TestUser.filter(active=True).count_async()
@@ -200,7 +206,9 @@ class TestModelIntegration:
         mock_result = Mock()
         mock_row = Mock()
         mock_result.one.return_value = mock_row
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         # Teste exists
         exists = await TestUser.filter(name="João").exists_async()
@@ -220,7 +228,9 @@ class TestModelIntegration:
         # Mock de resultado para delete
         mock_result = Mock()
         mock_result.rowcount = 3
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         # Teste delete - usar chave primária (id) em vez de campo não indexado
         user_id = uuid.uuid4()
@@ -259,7 +269,9 @@ class TestModelIntegration:
         mock_result_set = [mock_row]
         mock_result = Mock()
         mock_result.__iter__ = lambda s: iter(mock_result_set)
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         # Teste query complexa (removido offset que não existe)
         users = await (TestUser
@@ -306,7 +318,9 @@ class TestModelIntegration:
         mock_result_set = [mock_row]
         mock_result = Mock()
         mock_result.__iter__ = lambda s: iter(mock_result_set)
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         posts = await TestPost.filter(user_id=user_id, published=True).all_async()
         
@@ -348,7 +362,9 @@ class TestModelIntegration:
         # O result_set precisa ser iterável
         mock_result = Mock()
         mock_result.__iter__ = lambda s: iter(mock_rows)
-        mock_session.execute_async.return_value = mock_result
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
         
         # Teste busca de múltiplos usuários
         users = await TestUser.filter(active=True).all_async()

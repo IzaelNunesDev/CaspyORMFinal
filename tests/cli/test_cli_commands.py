@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from cli.main import app, show_models_path_error, CLI_VERSION
+from cli.main import app, CLI_VERSION
 
 def strip_ansi(text):
     ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
@@ -77,22 +77,7 @@ def test_info_command():
     assert result.exit_code == 0
     assert "CaspyORM CLI" in result.stdout
 
-@patch('cli.main.console.print')
-def test_show_models_path_error(mock_print):
-    """Testa se show_models_path_error exibe mensagem correta."""
-    show_models_path_error('test_module', 'ModuleNotFoundError')
-    
-    # Verifica se console.print foi chamado
-    assert mock_print.called
-    
-    # Verifica se a mensagem contém informações úteis em qualquer chamada
-    calls = mock_print.call_args_list
-    found_module = any('test_module' in str(call) for call in calls)
-    found_error = any('ModuleNotFoundError' in str(call) for call in calls)
-    found_env = any('CASPY_MODELS_PATH' in str(call) for call in calls)
-    assert found_module
-    assert found_error
-    assert found_env
+
 
 def test_query_command_missing_arguments():
     """Testa se o comando query falha sem argumentos obrigatórios."""
@@ -137,7 +122,7 @@ def test_models_command_no_models():
         with patch.dict(os.environ, {"CASPY_MODELS_PATH": "mock_module"}):
             result = runner.invoke(app, ['models'])
             assert result.exit_code == 0
-            assert "Nenhum modelo CaspyORM encontrado no módulo" in result.stdout
+            assert "Nenhum modelo CaspyORM encontrado nos caminhos de busca." in result.stdout
 
 if __name__ == '__main__':
     # Executar testes de comandos

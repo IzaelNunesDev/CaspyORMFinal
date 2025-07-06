@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from cli.main import app, get_config, find_model_class, parse_filters, show_models_path_error
+from cli.main import app, get_config, find_model_class, parse_filters
 
 # Configurar o runner do Typer
 runner = CliRunner()
@@ -31,10 +31,10 @@ class TestCLIConfiguration:
         with patch.dict(os.environ, {}, clear=True):
             config = get_config()
             
-            assert config['hosts'] == ['localhost']
-            assert config['keyspace'] == 'caspyorm_demo'
+            assert config['hosts'] == ['127.0.0.1']
+            assert config['keyspace'] == 'caspyorm_app'
             assert config['port'] == 9042
-            assert config['models_path'] == 'models'
+            assert config['model_paths'] == []
     
     def test_get_config_with_env_vars(self):
         """Testa se get_config() lê variáveis de ambiente corretamente."""
@@ -51,7 +51,7 @@ class TestCLIConfiguration:
             assert config['hosts'] == ['host1', 'host2', 'host3']
             assert config['keyspace'] == 'test_keyspace'
             assert config['port'] == 9043
-            assert config['models_path'] == 'test_models'
+            assert config['model_paths'] == ['test_models']
 
 class TestCLICommands:
     """Testes para comandos do CLI."""
@@ -132,25 +132,7 @@ class TestCLIUtilities:
         assert result['name'] == 'value'
         assert len(result) == 1  # Apenas o válido deve ser processado
 
-class TestCLIErrorHandling:
-    """Testes para tratamento de erros do CLI."""
-    
-    @patch('cli.main.console.print')
-    def test_show_models_path_error(self, mock_print):
-        """Testa se show_models_path_error exibe mensagem correta."""
-        show_models_path_error('test_module', 'ModuleNotFoundError')
-        
-        # Verifica se console.print foi chamado com a mensagem de erro
-        mock_print.assert_called()
-        calls = mock_print.call_args_list
-        
-        # Verifica se a mensagem contém informações úteis em qualquer chamada
-        found_module = any('test_module' in str(call) for call in calls)
-        found_error = any('ModuleNotFoundError' in str(call) for call in calls)
-        found_env = any('CASPY_MODELS_PATH' in str(call) for call in calls)
-        assert found_module
-        assert found_error
-        assert found_env
+
 
 class TestCLIAsyncFunctions:
     """Testes para funções assíncronas do CLI."""

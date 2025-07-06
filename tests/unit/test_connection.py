@@ -187,7 +187,9 @@ class TestConnection:
         mock_session = Mock()
         mock_result = Mock()
         # Usar AsyncMock para o método execute_async
-        mock_session.execute_async = AsyncMock(return_value=mock_result)
+        mock_future = Mock()
+        mock_future.result.return_value = mock_result
+        mock_session.execute_async.return_value = mock_future
     
         conn = ConnectionManager()
         conn.async_session = mock_session  # async_session, não session

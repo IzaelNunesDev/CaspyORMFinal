@@ -19,10 +19,10 @@ def test_get_config_defaults():
     with patch.dict(os.environ, {}, clear=True):
         config = get_config()
         
-        assert config['hosts'] == ['localhost']
-        assert config['keyspace'] == 'caspyorm_demo'
+        assert config['hosts'] == ['127.0.0.1']
+        assert config['keyspace'] == 'caspyorm_app'
         assert config['port'] == 9042
-        assert config['models_path'] == 'models'
+        assert config['model_paths'] == []
 
 def test_get_config_with_env_vars():
     """Testa se get_config() lê variáveis de ambiente corretamente."""
@@ -39,7 +39,7 @@ def test_get_config_with_env_vars():
         assert config['hosts'] == ['host1', 'host2', 'host3']
         assert config['keyspace'] == 'test_keyspace'
         assert config['port'] == 9043
-        assert config['models_path'] == 'test_models'
+        assert config['model_paths'] == ['test_models']
 
 def test_parse_filters_empty():
     """Testa parse_filters com lista vazia."""
