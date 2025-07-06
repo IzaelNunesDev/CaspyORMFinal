@@ -1,56 +1,73 @@
-# CaspyORM
+# 🚀 CaspyORM
 
-Um ORM moderno e Pythonic para Apache Cassandra, inspirado no Pydantic e focado em produtividade e performance.
+> Um ORM moderno, rápido e Pythonic para Apache Cassandra — com suporte nativo a FastAPI, Pydantic e operações assíncronas.
 
-## 🚀 Instalação
+[![PyPI version](https://badge.fury.io/py/caspyorm.svg)](https://pypi.org/project/caspyorm/)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Instale diretamente do PyPI:
+CaspyORM é uma biblioteca ORM poderosa e de alta performance para aplicações Python que utilizam o **Apache Cassandra** como banco de dados NoSQL. Inspirada no **Pydantic** e no estilo do **Django ORM**, ela oferece uma API intuitiva, tipada, e com suporte a validação, filtros encadeáveis, modelos dinâmicos e integração com FastAPI.
+
+---
+
+## 🛠️ Recursos Principais
+
+- ✅ Definição de modelos via campos tipados (`fields.Text()`, `fields.UUID()`, etc.)
+- ✅ Suporte completo a operações **síncronas** e **assíncronas**
+- ✅ Integração com **Pydantic** (`as_pydantic()`)
+- ✅ Compatível com **FastAPI** (injeção de sessão, serialização, etc.)
+- ✅ CRUD, filtros, ordenação, paginação, contagem, existência
+- ✅ Suporte a **tipos compostos**: `List`, `Set`, `Map`
+- ✅ `bulk_create`, `update parcial`, `delete`, `collection updates`
+- ✅ CLI robusto via `caspy`
+- ✅ Compatível com Python 3.8+  
+- ✅ Testado e com tipagem estática rigorosa (via `mypy`, `ruff`, `black`)
+
+---
+
+## 📦 Instalação
 
 ```bash
 pip install caspyorm
 ```
 
 ### Requisitos
-- Python >= 3.8
-- Cassandra rodando e acessível
+- Python 3.8 ou superior
+- Apache Cassandra acessível (local ou remoto)
+- Driver oficial do Cassandra (cassandra-driver) será instalado automaticamente
 
-As dependências principais (cassandra-driver, pydantic, typing-extensions) são instaladas automaticamente via pip.
-
-## 🎯 Exemplo de Uso Básico
+## 🎯 Exemplo Básico
 
 ```python
 from caspyorm import Model, fields, connection
 import uuid
 
-# Configurar conexão (ajuste para seu host/keyspace)
-connection.setup(['localhost'], 'meu_keyspace')
+# Conectar ao Cassandra
+connection.connect(contact_points=["localhost"], keyspace="meu_keyspace")
 
+# Definição de modelo
 class Usuario(Model):
-    __table_name__ = 'usuarios'
+    __table_name__ = "usuarios"
     id = fields.UUID(primary_key=True)
     nome = fields.Text(required=True)
     email = fields.Text(index=True)
     ativo = fields.Boolean(default=True)
 
-# Sincronizar schema (cria tabela e índices)
+# Criar tabela se necessário
 Usuario.sync_table()
 
-# CRUD básico
+# Inserir dados
 usuario = Usuario.create(
     id=uuid.uuid4(),
     nome="João Silva",
     email="joao@email.com"
 )
 
-# Buscar por ID
+# Buscar
 usuario = Usuario.get(id=usuario.id)
-
-# Consultas com filtros
 usuarios_ativos = Usuario.filter(ativo=True).all()
-usuario_por_email = Usuario.filter(email="joao@email.com").first()
 ```
 
-## ⚡ Integração com FastAPI (Opcional)
+## ⚡ Integração com FastAPI
 
 ```python
 from fastapi import FastAPI, Depends
@@ -65,9 +82,9 @@ async def get_usuario(user_id: str, session = Depends(get_session)):
     return as_response_model(usuario)
 ```
 
-## 🔧 Integração com Pydantic (Opcional)
+## 🔧 Integração com Pydantic
 
-Você pode gerar modelos Pydantic a partir dos seus modelos CaspyORM:
+Transforme modelos CaspyORM em modelos Pydantic automaticamente:
 
 ```python
 PydanticUsuario = Usuario.as_pydantic()
@@ -75,12 +92,45 @@ usuario = Usuario.get(id=...)
 usuario_pydantic = usuario.to_pydantic_model()
 ```
 
-## 📚 Documentação
+## 🖥️ CLI (Interface de Linha de Comando)
 
-Para exemplos avançados, testes e documentação completa, acesse:
-- [Documentação Oficial](https://caspyorm.readthedocs.io)
-- [Repositório no GitHub](https://github.com/caspyorm/caspyorm)
+Instalado automaticamente como `caspy`.
 
----
+### Comandos disponíveis:
 
-Licença MIT. Desenvolvido por CaspyORM Team e colaboradores. 
+| Comando | Descrição |
+|---------|-----------|
+| `caspy query` | Busca ou filtra objetos no banco de dados |
+| `caspy models` | Lista todos os modelos disponíveis |
+| `caspy connect` | Testa a conexão com o cluster |
+| `caspy info` | Mostra informações sobre a CLI |
+
+### Configuração via Variáveis de Ambiente:
+
+```bash
+export CASPY_HOSTS=localhost
+export CASPY_KEYSPACE=biblioteca
+export CASPY_PORT=9042
+export CASPY_MODELS_PATH=models
+```
+
+### Exemplos de Uso:
+
+```bash
+# Testar conexão com keyspace específico
+caspy connect --keyspace biblioteca
+
+# Listar modelos disponíveis
+caspy models
+
+# Consultar dados
+caspy query autor count --keyspace biblioteca
+caspy query livro filter --filter "autor_id=123" --limit 5 --keyspace biblioteca
+caspy query autor get --filter "email=joao@email.com" --keyspace biblioteca
+```
+
+## 🧾 Licença
+
+MIT © 2024 - CaspyORM Team
+
+Desenvolvido com ❤️ para a comunidade Python. 

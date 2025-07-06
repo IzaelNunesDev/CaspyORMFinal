@@ -58,4 +58,7 @@ venv.bak/
 
 # IDE files
 .idea/
-.vscode/ 
+.vscode/
+
+# PyPI credentials
+.pypirc 
