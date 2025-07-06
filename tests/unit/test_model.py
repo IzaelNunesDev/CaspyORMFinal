@@ -3,6 +3,7 @@ Testes unitários para o módulo model.py do CaspyORM.
 """
 
 import pytest
+import asyncio
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
 import uuid
 from caspyorm.model import Model
@@ -106,9 +107,10 @@ class TestModel:
         user = UserModel(name='João', age=25, email='joao@example.com')
         setattr(user, 'id', '123') # Definir PK para o update
 
-        mock_session = MagicMock()
+        mock_session = AsyncMock() # Usar AsyncMock
         mock_session.prepare.return_value = MagicMock()
-        mock_session.execute_async = AsyncMock()
+        mock_session.execute_async.return_value = asyncio.Future()
+        mock_session.execute_async.return_value.set_result(None)
         mock_get_async_session.return_value = mock_session
 
         mock_build_cql.return_value = ("UPDATE users SET name = ? WHERE id = ?", ["João Silva", "123"])
@@ -185,9 +187,11 @@ class TestModel:
         setattr(users[0], 'id', 'id1')
         setattr(users[1], 'id', 'id2')
 
-        mock_session = MagicMock()
+        mock_session = AsyncMock() # Usar AsyncMock
         mock_session.prepare.return_value = MagicMock()
-        mock_session.execute_async = AsyncMock()
+        future = asyncio.Future()
+        future.set_result(None)
+        mock_session.execute_async.return_value = future
         mock_get_async_session.return_value = mock_session
 
         mock_build_insert_cql.return_value = "INSERT INTO users (id, name, age, email, active, tags) VALUES (?, ?, ?, ?, ?, ?)"

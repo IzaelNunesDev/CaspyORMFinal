@@ -35,7 +35,7 @@ class QuerySet:
         """Executa a query quando o queryset é iterado (síncrono)."""
         if self._result_cache is None:
             print("EXECUTADO")
-            self._execute_query()
+            await self._execute_query()
         return iter(self._result_cache or [])
 
     async def __aiter__(self):
@@ -59,7 +59,7 @@ class QuerySet:
         new_qs._ordering = self._ordering[:]  # NOVO: copiar lista de ordenação
         return new_qs
 
-    def _execute_query(self):
+    async def _execute_query(self):
         """Executa a query no banco de dados e armazena os resultados no cache (síncrono)."""
         cql, params = query_builder.build_select_cql(
             self.model_cls.__caspy_schema__,
@@ -71,7 +71,7 @@ class QuerySet:
         )
         session = get_session()
         # Sempre preparar a query para garantir suporte a parâmetros posicionais
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         result_set = session.execute(prepared, params)
         self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
         logger.debug(f"Executando query (SÍNCRONO): {cql} com parâmetros: {params}")
@@ -88,10 +88,10 @@ class QuerySet:
         )
         session = get_async_session()
         # Preparar a query de forma síncrona, executar de forma assíncrona
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         future = session.execute_async(prepared, params)
         # ResponseFuture não é awaitable, precisamos usar asyncio.to_thread para obter o resultado
-        result_set = await asyncio.to_thread(future.result)
+        result_set = await future
         self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
         logger.debug(f"Executando query (ASSÍNCRONO): {cql} com parâmetros: {params}")
 
@@ -133,7 +133,7 @@ class QuerySet:
     def all(self) -> List["Model"]:
         """Executa a query e retorna todos os resultados como uma lista (síncrono)."""
         if self._result_cache is None:
-            self._execute_query()
+            await self._execute_query()
         return self._result_cache or []
 
     async def all_async(self) -> List["Model"]:
@@ -175,7 +175,7 @@ class QuerySet:
         )
         
         session = get_session()
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         result_set = session.execute(prepared, params)
         
         # O resultado de COUNT(*) é uma única linha com uma coluna chamada 'count'.
@@ -197,9 +197,9 @@ class QuerySet:
         )
         
         session = get_async_session()
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         future = session.execute_async(prepared, params)
-        result_set = await asyncio.to_thread(future.result)
+        result_set = await future
         
         # O resultado de COUNT(*) é uma única linha com uma coluna chamada 'count'.
         row = result_set.one()
@@ -225,7 +225,7 @@ class QuerySet:
         )
         
         session = get_session()
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         result_set = session.execute(prepared, params)
         
         # Se .one() retornar uma linha, significa que existe. Se retornar None, não existe.
@@ -251,9 +251,9 @@ class QuerySet:
         )
         
         session = get_async_session()
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         future = session.execute_async(prepared, params)
-        result_set = await asyncio.to_thread(future.result)
+        result_set = await future
         
         # Se .one() retornar uma linha, significa que existe. Se retornar None, não existe.
         return result_set.one() is not None
@@ -279,7 +279,7 @@ class QuerySet:
             filters=self._filters
         )
         logger.debug(f"Executando DELETE (SÍNCRONO): {cql} com parâmetros: {params}")
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         session.execute(prepared, params)
         return 0  # Cassandra não retorna número de linhas deletadas
 
@@ -304,7 +304,7 @@ class QuerySet:
             filters=self._filters
         )
         logger.debug(f"Executando DELETE (ASSÍNCRONO): {cql} com parâmetros: {params}")
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         future = session.execute_async(prepared, params)
         await future
         return 0  # Cassandra não retorna número de linhas deletadas
@@ -326,7 +326,7 @@ class QuerySet:
             ordering=self._ordering
         )
         session = get_session()
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         statement = prepared.bind(params)
         statement.fetch_size = page_size
         if paging_state:
@@ -353,13 +353,13 @@ class QuerySet:
             ordering=self._ordering
         )
         session = get_async_session()
-        prepared = session.prepare(cql)
+        prepared = await session.prepare_async(cql)
         statement = prepared.bind(params)
         statement.fetch_size = page_size
         if paging_state:
             statement.paging_state = paging_state
         future = session.execute_async(statement)
-        result_set = await asyncio.to_thread(future.result)
+        result_set = await future
         resultados = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
         next_paging_state = result_set.paging_state
         return resultados, next_paging_state
@@ -459,7 +459,7 @@ async def save_instance_async(instance) -> None:
         session = get_async_session()
         prepared = session.prepare(insert_query)
         future = session.execute_async(prepared, list(data.values()))
-        await asyncio.to_thread(future.result)
+        await future
         logger.info(f"Instância salva na tabela '{table_name}' (ASSÍNCRONO)")
     except Exception as e:
         logger.error(f"Erro ao salvar instância (async): {e}")

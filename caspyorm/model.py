@@ -98,7 +98,7 @@ class Model(metaclass=ModelMetaclass):
         await save_instance_async(self)
         return self
 
-    def update(self, **kwargs: Any) -> Self:
+    async def update(self, **kwargs: Any) -> Self:
         """
         Atualiza parcialmente esta instância no banco de dados.
         Diferente de save(), que faz um upsert completo, update() gera
@@ -139,8 +139,8 @@ class Model(metaclass=ModelMetaclass):
         try:
             from .connection import get_session
             session = get_session()
-            prepared = session.prepare(cql)
-            session.execute(prepared, params)
+            prepared = await session.prepare_async(cql)
+            await session.execute_async(prepared, params)
             logger.info(f"Instância atualizada: {self.__class__.__name__} com campos: {list(validated_data.keys())}")
         except Exception as e:
             logger.error(f"Erro ao atualizar instância: {e}")
@@ -189,9 +189,9 @@ class Model(metaclass=ModelMetaclass):
         try:
             from .connection import get_async_session
             session = get_async_session()
-            prepared = session.prepare(cql)
+            prepared = await session.prepare_async(cql)
             future = session.execute_async(prepared, params)
-            await asyncio.to_thread(future.result)
+            await future
             logger.info(f"Instância atualizada (ASSÍNCRONO): {self.__class__.__name__} com campos: {list(validated_data.keys())}")
         except Exception as e:
             logger.error(f"Erro ao atualizar instância (async): {e}")
@@ -251,9 +251,9 @@ class Model(metaclass=ModelMetaclass):
         # Executar batch assíncrono
         try:
             for cql, params in batch_queries:
-                prepared = session.prepare(cql)
+                prepared = await session.prepare_async(cql)
                 future = session.execute_async(prepared, params)
-                await asyncio.to_thread(future.result)
+                await future
             
             logger.info(f"Bulk create assíncrono concluído: {len(instances)} instâncias")
             return instances
@@ -345,7 +345,7 @@ class Model(metaclass=ModelMetaclass):
         await QuerySet(self.__class__).filter(**pk_filters).delete_async()
         logger.info(f"Instância deletada (ASSÍNCRONO): {self}")
 
-    def update_collection(self, field_name: str, add: Any = None, remove: Any = None) -> Self:
+    async def update_collection(self, field_name: str, add: Any = None, remove: Any = None) -> Self:
         """
         Atualiza atomicamente um campo de coleção (List, Set) no banco de dados.
 
@@ -374,8 +374,8 @@ class Model(metaclass=ModelMetaclass):
         try:
             from .connection import get_session
             session = get_session()
-            prepared = session.prepare(cql)
-            session.execute(prepared, params)
+            prepared = await session.prepare_async(cql)
+            await session.execute_async(prepared, params)
             logger.info(f"Coleção '{field_name}' atualizada para a instância: {self}")
         except Exception as e:
             logger.error(f"Erro ao atualizar coleção: {e}")
@@ -411,9 +411,9 @@ class Model(metaclass=ModelMetaclass):
         try:
             from .connection import get_async_session
             session = get_async_session()
-            prepared = session.prepare(cql)
+            prepared = await session.prepare_async(cql)
             future = session.execute_async(prepared, params)
-            await asyncio.to_thread(future.result)
+            await future
             logger.info(f"Coleção '{field_name}' atualizada (ASSÍNCRONO) para a instância: {self}")
         except Exception as e:
             logger.error(f"Erro ao atualizar coleção (async): {e}")

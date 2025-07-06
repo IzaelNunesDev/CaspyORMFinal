@@ -99,18 +99,18 @@ class TestConnection:
     @patch('caspyorm.connection.Cluster')
     async def test_connect_async(self, mock_cluster_class):
         """Testa conexão assíncrona."""
-        mock_cluster = Mock()
-        mock_session = Mock()
-        mock_cluster.connect.return_value = mock_session  # Usar connect() síncrono
+        mock_cluster = AsyncMock()
+        mock_session = AsyncMock()
+        mock_cluster.connect_async.return_value = mock_session
         mock_cluster_class.return_value = mock_cluster
-    
+
         conn = ConnectionManager()
         await conn.connect_async(contact_points=['host1'], keyspace='test_keyspace')
-    
+
         mock_cluster_class.assert_called_once()
-        mock_cluster.connect.assert_called_once()  # connect() sem argumentos
-        assert conn.cluster is not None # Alterado para verificar se o cluster foi atribuído
-        assert conn.async_session == mock_session  # async_session, não session
+        mock_cluster.connect_async.assert_called_once()
+        assert conn.cluster == mock_cluster
+        assert conn.async_session == mock_session
         assert conn.keyspace == 'test_keyspace'
     
     def test_disconnect_sync(self):
@@ -133,19 +133,19 @@ class TestConnection:
     @pytest.mark.asyncio
     async def test_disconnect_async(self):
         """Testa desconexão assíncrona."""
-        mock_cluster = Mock()
-        mock_session = Mock()
+        mock_cluster = AsyncMock()
+        mock_session = AsyncMock()
     
         conn = ConnectionManager()
         conn.cluster = mock_cluster
-        conn.async_session = mock_session  # async_session, não session
+        conn.async_session = mock_session
     
         await conn.disconnect_async()
     
-        mock_session.shutdown.assert_called_once()  # shutdown() síncrono
-        mock_cluster.shutdown.assert_called_once()
+        mock_session.shutdown_async.assert_called_once()
+        mock_cluster.shutdown_async.assert_called_once()
         assert conn.cluster is None
-        assert conn.async_session is None  # async_session, não session
+        assert conn.async_session is None
         assert conn.keyspace is None
     
     def test_disconnect_sync_no_session(self):
@@ -184,15 +184,14 @@ class TestConnection:
     @pytest.mark.asyncio
     async def test_execute_async(self):
         """Testa execução assíncrona de query."""
-        mock_session = Mock()
+        mock_session = AsyncMock()
         mock_result = Mock()
-        # Usar AsyncMock para o método execute_async
-        mock_future = Mock()
-        mock_future.result.return_value = mock_result
-        mock_session.execute_async.return_value = mock_future
+        future = asyncio.Future()
+        future.set_result(mock_result)
+        mock_session.execute_async.return_value = future
     
         conn = ConnectionManager()
-        conn.async_session = mock_session  # async_session, não session
+        conn.async_session = mock_session
     
         result = await conn.execute_async("SELECT * FROM table")
     
