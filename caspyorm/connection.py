@@ -3,6 +3,7 @@
 import asyncio
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
+from cassandra.query import PreparedStatement, BoundStatement
 from typing import List, Optional, Dict, Any
 import logging
 
@@ -94,8 +95,8 @@ class ConnectionManager:
                 **kwargs
             )
             
-            # Conectar e obter sessão
-            self.async_session = await self.cluster.connect_async()
+            # Conectar e obter sessão (o cassandra-driver não tem connect_async)
+            self.async_session = self.cluster.connect()
             self._is_async_connected = True
     
             # Usar keyspace se especificado
@@ -178,7 +179,8 @@ class ConnectionManager:
                 future = self.async_session.execute_async(query, parameters)
             else:
                 future = self.async_session.execute_async(query)
-            return await future
+            # ResponseFuture não é awaitable, precisamos usar asyncio.to_thread
+            return await asyncio.to_thread(future.result)
         except Exception as e:
             logger.error(f"Erro ao executar query (async): {e}")
             logger.error(f"Query: {query}")
@@ -203,11 +205,11 @@ class ConnectionManager:
     async def disconnect_async(self) -> None:
         """Desconecta do cluster Cassandra (assíncrono)."""
         if self.async_session:
-            await self.async_session.shutdown_async()
+            self.async_session.shutdown()
             self.async_session = None
         
         if self.cluster:
-            await self.cluster.shutdown_async()
+            self.cluster.shutdown()
             self.cluster = None
         
         self._is_async_connected = False
@@ -293,3 +295,21 @@ def get_async_session():
     Garante que a conexão assíncrona foi estabelecida.
     """
     return connection.get_async_session()
+
+async def execute_cql_async(query, parameters: Optional[Any] = None):
+    """Helper para executar queries CQL de forma assíncrona usando asyncio.to_thread.
+    Aceita str, PreparedStatement ou BoundStatement.
+    """
+    session = get_async_session()
+    if isinstance(query, (PreparedStatement, BoundStatement)):
+        if parameters is not None:
+            future = session.execute_async(query, parameters)
+        else:
+            future = session.execute_async(query)
+    else:
+        # query é str
+        if parameters is not None:
+            future = session.execute_async(query, parameters)
+        else:
+            future = session.execute_async(query)
+    return await asyncio.to_thread(future.result)

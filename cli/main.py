@@ -36,6 +36,7 @@ from caspyorm.fields import UUID, Timestamp, Text
 from caspyorm.model import (
     Model as CaspyModel,
 )
+from caspyorm._internal.migration_model import Migration
 
 """
 CaspyORM CLI - Ferramenta de linha de comando para interagir com modelos CaspyORM.
@@ -583,14 +584,6 @@ def info():
 
 
 # --- Migrations ---
-
-# FIX: Redefinindo o modelo Migration para usar 'version' (nome do arquivo) como PK
-class Migration(CaspyModel):
-    __table_name__ = "caspyorm_migrations"
-    # Usamos o nome completo do arquivo (versão) como chave primária
-    version = Text(primary_key=True) # Ex: "V20250706035805__create_users_table.py"
-    applied_at = Timestamp(required=True)
-
 
 def ensure_migrations_dir():
     """Garante que o diretório de migrações exista."""

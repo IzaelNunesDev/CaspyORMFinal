@@ -189,9 +189,9 @@ class Model(metaclass=ModelMetaclass):
         try:
             from .connection import get_async_session
             session = get_async_session()
-            prepared = await session.prepare_async(cql)
+            prepared = session.prepare(cql)
             future = session.execute_async(prepared, params)
-            await future
+            await asyncio.to_thread(future.result)
             logger.info(f"Instância atualizada (ASSÍNCRONO): {self.__class__.__name__} com campos: {list(validated_data.keys())}")
         except Exception as e:
             logger.error(f"Erro ao atualizar instância (async): {e}")
@@ -302,8 +302,8 @@ class Model(metaclass=ModelMetaclass):
     @classmethod
     async def sync_table_async(cls, auto_apply: bool = False, verbose: bool = True):
         """Sincroniza o schema da tabela (assíncrono)."""
-        # TODO: Implementar sync_table_async
-        sync_table(cls, auto_apply=auto_apply, verbose=verbose)
+        from ._internal.schema_sync import sync_table_async
+        await sync_table_async(cls, auto_apply=auto_apply, verbose=verbose)
 
     def __repr__(self) -> str:
         attrs = ", ".join(f"{k}={getattr(self, k)!r}" for k in self.model_fields)

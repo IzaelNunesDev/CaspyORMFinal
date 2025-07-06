@@ -309,31 +309,36 @@ class TestQuerySet:
         mock_session.execute.call_args[0][0].fetch_size == 1
 
     @pytest.mark.asyncio
-    @patch('caspyorm.query.get_async_session')
+    @patch('caspyorm.connection.execute_cql_async')
+    @patch('caspyorm.connection.get_async_session')
     @patch('caspyorm.query.query_builder.build_select_cql')
-    async def test_queryset_page_async(self, mock_build_select, mock_get_async_session):
+    async def test_queryset_page_async(self, mock_build_select, mock_get_async_session, mock_execute_cql_async):
         """Testa paginação assíncrona do QuerySet."""
         mock_session = AsyncMock() # Usar AsyncMock
         mock_get_async_session.return_value = mock_session
         
         mock_build_select.return_value = ("SELECT * FROM test_users", [])
         
+        # Mock para prepared statement com método .bind()
+        mock_prepared = Mock()
+        mock_prepared.bind.return_value = Mock()
+        mock_session.prepare = Mock(return_value=mock_prepared)
+        
         mock_row = Mock()
         mock_row._asdict.return_value = {'id': '87654321-4321-8765-4321-876543210987', 'name': 'User2'}
-        mock_result_set = [mock_row]
-        
-        mock_awaitable_result = asyncio.Future()
-        mock_awaitable_result.set_result(mock_result_set)
-        
-        mock_session.execute_async.return_value = mock_awaitable_result
+        # Mock para result_set iterável com paging_state
+        mock_result_set = Mock()
+        mock_result_set.__iter__ = lambda self: iter([mock_row])
+        mock_result_set.paging_state = 'fake_paging_state'
+        mock_execute_cql_async.return_value = mock_result_set
         
         queryset = QuerySet(UserModel)
         results, next_paging_state = await queryset.page_async(page_size=1)
         
         assert len(results) == 1
         assert hasattr(results[0], 'name') and getattr(results[0], 'name') == 'User2'
-        assert next_paging_state is None # O mock não tem estado de paginação
-        mock_session.execute_async.assert_called_once()
+        assert next_paging_state == 'fake_paging_state'
+        mock_execute_cql_async.assert_called_once()
 
     def test_queryset_hash(self):
         """Testa hash do QuerySet."""
