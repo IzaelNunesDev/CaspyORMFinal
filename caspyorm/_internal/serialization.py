@@ -13,6 +13,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Lidar com a importação opcional do Pydantic
+PYDANTIC_V2 = False
+BaseModel = None
+create_model = None
+Field = None
+ConfigDict = None
+FieldInfo = None
+
 try:
     import pydantic
     from pydantic import BaseModel, create_model, Field
@@ -30,13 +37,7 @@ try:
         FieldInfo = None
         
 except ImportError:
-    PYDANTIC_V2 = False
-    # Definir stubs para evitar erros se pydantic não estiver instalado
-    class BaseModel: pass
-    def create_model(*args, **kwargs): return None
-    def Field(*args, **kwargs): pass
-    ConfigDict = None
-    FieldInfo = None
+    pass
 
 class CaspyJSONEncoder(json.JSONEncoder):
     """Encoder JSON customizado para tipos da CaspyORM."""
@@ -73,7 +74,10 @@ def generate_pydantic_model(
     Gera dinamicamente um modelo Pydantic a partir de um modelo CaspyORM.
     Suporta tanto Pydantic v1 quanto v2.
     """
-    if not PYDANTIC_V2:
+    # Verificar se Pydantic está disponível
+    try:
+        import pydantic
+    except ImportError:
         raise ImportError("A funcionalidade de integração com Pydantic requer que o pacote 'pydantic' seja instalado.")
 
     exclude = exclude or []
@@ -93,7 +97,7 @@ def generate_pydantic_model(
             continue
         
         # Configurar campo baseado na versão do Pydantic
-        if PYDANTIC_V2:
+        if PYDANTIC_V2 and Field is not None:
             # Pydantic v2: usar Field() para configurações
             if field_obj.required:
                 pydantic_fields[field_name] = (python_type, Field())
@@ -117,6 +121,9 @@ def generate_pydantic_model(
     model_name = name or f"{model_cls.__name__}Pydantic"
     
     # Criar modelo com configurações específicas da versão
+    if create_model is None:
+        raise RuntimeError("Pydantic não está disponível")
+    
     if PYDANTIC_V2:
         # Pydantic v2: usar ConfigDict
         pydantic_model = create_model(

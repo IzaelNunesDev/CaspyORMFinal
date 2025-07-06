@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING
 
 from ..connection import get_session
+from .cql_types import get_cql_type
 
 if TYPE_CHECKING:
     from cassandra.cluster import Session
@@ -13,39 +14,7 @@ else:
 
 logger = logging.getLogger(__name__)
 
-def _get_cql_type(field_type: str) -> str:
-    """Mapeia tipos Python para tipos CQL."""
-    type_mapping = {
-        'text': 'text',
-        'varchar': 'text',
-        'int': 'int',
-        'bigint': 'bigint',
-        'float': 'float',
-        'double': 'double',
-        'boolean': 'boolean',
-        'uuid': 'uuid',
-        'timestamp': 'timestamp',
-        'date': 'date',
-        'time': 'time',
-        'blob': 'blob',
-        'decimal': 'decimal',
-        'varint': 'int',
-        'inet': 'inet',
-        'list': 'list<text>',
-        'set': 'set<text>',
-        'map': 'map<text, text>',
-        'tuple': 'tuple<text>',
-        'frozen': 'frozen<text>',
-        'counter': 'counter',
-        'duration': 'duration',
-        'smallint': 'int',
-        'tinyint': 'int',
-        'timeuuid': 'uuid',
-        'ascii': 'text',
-        'json': 'text'
-    }
-    base_type = field_type.split('<')[0].split('(')[0].lower()
-    return type_mapping.get(base_type, 'text')
+
 
 def get_cassandra_table_schema(session: Session, keyspace: str, table_name: str) -> Optional[Dict[str, Any]]:
     """
@@ -54,61 +23,76 @@ def get_cassandra_table_schema(session: Session, keyspace: str, table_name: str)
     """
     try:
         # Consulta sem ORDER BY, pois Cassandra não permite ORDER BY em system_schema.columns
-        query = f"""
+        # Obter informações das colunas
+        columns_query = f"""
             SELECT column_name, kind, type
             FROM system_schema.columns
             WHERE keyspace_name = '{keyspace}'
             AND table_name = '{table_name}'
         """
-        rows = session.execute(query)
-        if not rows:
+        columns_rows = session.execute(columns_query)
+        if not columns_rows:
             return None
         
+        # Obter a definição da chave primária da tabela
+        table_query = f"""
+            SELECT primary_key
+            FROM system_schema.tables
+            WHERE keyspace_name = '{keyspace}'
+            AND table_name = '{table_name}'
+        """
+        table_row = session.execute(table_query).one()
+        if not table_row:
+            return None # Tabela não encontrada, embora as colunas tenham sido
+
+        # Parsear a primary_key do formato string para uma lista de tuplas (partition_keys, clustering_keys)
+        # Ex: "((id, name), age)" -> (('id', 'name'), ('age',))
+        primary_key_str = table_row.primary_key
+        
+        # Remove os parênteses externos e divide as chaves de partição e clusterização
+        pk_parts_str = primary_key_str[1:-1] # Remove o primeiro e último parêntese
+        
+        partition_keys_str = ""
+        clustering_keys_str = ""
+
+        # Encontra o índice do primeiro parêntese de fechamento para separar partition keys
+        first_closing_paren_idx = pk_parts_str.find(')')
+        if first_closing_paren_idx != -1:
+            partition_keys_str = pk_parts_str[1:first_closing_paren_idx] # Remove o parêntese de abertura
+            if first_closing_paren_idx + 2 < len(pk_parts_str): # Verifica se há clustering keys
+                clustering_keys_str = pk_parts_str[first_closing_paren_idx + 2:]
+        else: # Não há parênteses para partition keys, então é uma única partition key
+            partition_keys_str = pk_parts_str.split(',')[0].strip()
+            if ',' in pk_parts_str:
+                clustering_keys_str = pk_parts_str[len(partition_keys_str) + 1:].strip()
+
+        partition_keys = [k.strip() for k in partition_keys_str.split(',') if k.strip()]
+        clustering_keys = [k.strip() for k in clustering_keys_str.split(',') if k.strip()]
+
         # Estrutura para armazenar o schema
         schema = {
             'fields': {},
             'primary_keys': [],
-            'partition_keys': [],
-            'clustering_keys': []
+            'partition_keys': partition_keys,
+            'clustering_keys': clustering_keys
         }
         
-        for row in rows:
+        # Mapear tipos CQL para tipos Python (mantido para compatibilidade e clareza)
+        type_mapping = {
+            'text': 'text', 'varchar': 'text', 'int': 'int', 'bigint': 'int',
+            'float': 'float', 'double': 'float', 'boolean': 'boolean', 'uuid': 'uuid',
+            'timestamp': 'timestamp', 'date': 'date', 'time': 'time', 'blob': 'blob',
+            'decimal': 'decimal', 'varint': 'int', 'inet': 'inet', 'list': 'list',
+            'set': 'set', 'map': 'map', 'tuple': 'tuple', 'frozen': 'frozen',
+            'counter': 'counter', 'duration': 'duration', 'smallint': 'int',
+            'tinyint': 'int', 'timeuuid': 'uuid', 'ascii': 'text', 'json': 'text'
+        }
+        
+        for row in columns_rows:
             column_name = row.column_name
             column_type = row.type
-            column_kind = row.kind
+            column_kind = row.kind # 'partition_key', 'clustering', 'regular', 'static'
             
-            # Mapear tipos CQL para tipos Python
-            type_mapping = {
-                'text': 'text',
-                'varchar': 'text',
-                'int': 'int',
-                'bigint': 'int',
-                'float': 'float',
-                'double': 'float',
-                'boolean': 'boolean',
-                'uuid': 'uuid',
-                'timestamp': 'timestamp',
-                'date': 'date',
-                'time': 'time',
-                'blob': 'blob',
-                'decimal': 'decimal',
-                'varint': 'int',
-                'inet': 'inet',
-                'list': 'list',
-                'set': 'set',
-                'map': 'map',
-                'tuple': 'tuple',
-                'frozen': 'frozen',
-                'counter': 'counter',
-                'duration': 'duration',
-                'smallint': 'int',
-                'tinyint': 'int',
-                'timeuuid': 'uuid',
-                'ascii': 'text',
-                'json': 'text'
-            }
-            
-            # Simplificar tipos complexos para comparação
             base_type = column_type.split('<')[0].split('(')[0].lower()
             mapped_type = type_mapping.get(base_type, base_type)
             
@@ -117,14 +101,9 @@ def get_cassandra_table_schema(session: Session, keyspace: str, table_name: str)
                 'cql_type': column_type,
                 'kind': column_kind
             }
-            
-            # Classificar chaves
-            if column_kind == 'partition_key':
-                schema['partition_keys'].append(column_name)
-                schema['primary_keys'].append(column_name)
-            elif column_kind == 'clustering':
-                schema['clustering_keys'].append(column_name)
-                schema['primary_keys'].append(column_name)
+        
+        # Construir primary_keys na ordem correta
+        schema['primary_keys'] = partition_keys + clustering_keys
         
         return schema
         
@@ -141,7 +120,7 @@ def apply_schema_changes(session: Session, table_name: str, model_schema: Dict[s
     # Adicionar novas colunas
     for field_name, field_details in model_schema['fields'].items():
         if field_name not in db_schema['fields']:
-            cql_type = _get_cql_type(field_details['type'])
+            cql_type = get_cql_type(field_details['type'])
             cql = f"ALTER TABLE {table_name} ADD {field_name} {cql_type}"
             try:
                 session.execute(cql)
@@ -168,8 +147,9 @@ def apply_schema_changes(session: Session, table_name: str, model_schema: Dict[s
     # Verificar mudanças na chave primária (não suportado)
     if model_schema['primary_keys'] != db_schema['primary_keys']:
         mismatch = f"{db_schema['primary_keys']} -> {model_schema['primary_keys']}"
-        logger.error("\n  [!] ERRO CRÍTICO: A alteração de chave primária não é possível no Cassandra.")
-        logger.error("      - A tabela deve ser recriada para aplicar esta mudança.")
+        error_msg = f"ERRO CRÍTICO: A alteração de chave primária não é possível no Cassandra. Mudança detectada: {mismatch}. A tabela deve ser recriada para aplicar esta mudança."
+        logger.error(f"\n  [!] {error_msg}")
+        raise RuntimeError(error_msg)
     
     logger.info("\n✅ Aplicação de schema concluída.")
 
@@ -185,14 +165,20 @@ def build_create_table_cql(table_name: str, schema: Dict[str, Any]) -> str:
     # Construir chave primária
     if schema['partition_keys'] and schema['clustering_keys']:
         # Chave composta: partition + clustering
+        # Sintaxe correta: PRIMARY KEY ((partition_key1, partition_key2), clustering_key1, clustering_key2)
         pk_def = f"PRIMARY KEY (({', '.join(schema['partition_keys'])})"
         if schema['clustering_keys']:
             pk_def += f", {', '.join(schema['clustering_keys'])})"
         else:
             pk_def += ")"
     elif schema['partition_keys']:
-        # Chave simples
-        pk_def = f"PRIMARY KEY ({', '.join(schema['partition_keys'])})"
+        # Chave simples - verificar se há múltiplas partition keys
+        if len(schema['partition_keys']) > 1:
+            # Múltiplas partition keys sem clustering keys
+            pk_def = f"PRIMARY KEY (({', '.join(schema['partition_keys'])}))"
+        else:
+            # Uma única partition key
+            pk_def = f"PRIMARY KEY ({', '.join(schema['partition_keys'])})"
     else:
         raise RuntimeError("Tabela deve ter pelo menos uma chave primária")
     

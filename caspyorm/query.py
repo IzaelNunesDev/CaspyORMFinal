@@ -1,5 +1,6 @@
 # caspyorm/query.py (REVISADO E AMPLIADO)
 
+import asyncio
 from typing import Any, Dict, List, Optional, Type
 from typing_extensions import Self
 from caspyorm.connection import get_session, get_async_session, execute
@@ -65,7 +66,8 @@ class QuerySet:
             columns=None,  # Seleciona todas as colunas
             filters=self._filters,
             limit=self._limit,
-            ordering=self._ordering  # NOVO: passar ordenação
+            ordering=self._ordering,
+            allow_filtering=True # Adicionado para permitir filtros em campos não-PK
         )
         session = get_session()
         # Sempre preparar a query para garantir suporte a parâmetros posicionais
@@ -81,12 +83,15 @@ class QuerySet:
             columns=None,  # Seleciona todas as colunas
             filters=self._filters,
             limit=self._limit,
-            ordering=self._ordering  # NOVO: passar ordenação
+            ordering=self._ordering,
+            allow_filtering=True # Adicionado para permitir filtros em campos não-PK
         )
         session = get_async_session()
         # Preparar a query de forma síncrona, executar de forma assíncrona
         prepared = session.prepare(cql)
-        result_set = session.execute_async(prepared, params).result()
+        future = session.execute_async(prepared, params)
+        # ResponseFuture não é awaitable, precisamos usar asyncio.to_thread para obter o resultado
+        result_set = await asyncio.to_thread(future.result)
         self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
         logger.debug(f"Executando query (ASSÍNCRONO): {cql} com parâmetros: {params}")
 
@@ -193,7 +198,8 @@ class QuerySet:
         
         session = get_async_session()
         prepared = session.prepare(cql)
-        result_set = session.execute_async(prepared, params).result()
+        future = session.execute_async(prepared, params)
+        result_set = await asyncio.to_thread(future.result)
         
         # O resultado de COUNT(*) é uma única linha com uma coluna chamada 'count'.
         row = result_set.one()
@@ -246,7 +252,8 @@ class QuerySet:
         
         session = get_async_session()
         prepared = session.prepare(cql)
-        result_set = session.execute_async(prepared, params).result()
+        future = session.execute_async(prepared, params)
+        result_set = await asyncio.to_thread(future.result)
         
         # Se .one() retornar uma linha, significa que existe. Se retornar None, não existe.
         return result_set.one() is not None
@@ -287,8 +294,7 @@ class QuerySet:
             # Se a query já foi executada, podemos deletar por chave primária
             count = 0
             for item in self._result_cache:
-                # TODO: Implementar delete_async no Model
-                item.delete()
+                await item.delete_async()
                 count += 1
             return count
         # Se a query não foi executada, fazemos uma deleção em massa com base nos filtros
@@ -299,7 +305,8 @@ class QuerySet:
         )
         logger.debug(f"Executando DELETE (ASSÍNCRONO): {cql} com parâmetros: {params}")
         prepared = session.prepare(cql)
-        session.execute_async(prepared, params).result()
+        future = session.execute_async(prepared, params)
+        await asyncio.to_thread(future.result)
         return 0  # Cassandra não retorna número de linhas deletadas
 
     def page(self, page_size: int = 100, paging_state: Any = None):
@@ -322,7 +329,8 @@ class QuerySet:
         prepared = session.prepare(cql)
         statement = prepared.bind(params)
         statement.fetch_size = page_size
-        # TODO: Implementar paging_state corretamente
+        if paging_state:
+            statement.paging_state = paging_state
         result_set = session.execute(statement)
         resultados = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
         next_paging_state = result_set.paging_state
@@ -348,8 +356,10 @@ class QuerySet:
         prepared = session.prepare(cql)
         statement = prepared.bind(params)
         statement.fetch_size = page_size
-        # TODO: Implementar paging_state corretamente
-        result_set = session.execute_async(statement).result()
+        if paging_state:
+            statement.paging_state = paging_state
+        future = session.execute_async(statement)
+        result_set = await asyncio.to_thread(future.result)
         resultados = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
         next_paging_state = result_set.paging_state
         return resultados, next_paging_state
@@ -448,7 +458,8 @@ async def save_instance_async(instance) -> None:
     try:
         session = get_async_session()
         prepared = session.prepare(insert_query)
-        session.execute_async(prepared, list(data.values())).result()
+        future = session.execute_async(prepared, list(data.values()))
+        await asyncio.to_thread(future.result)
         logger.info(f"Instância salva na tabela '{table_name}' (ASSÍNCRONO)")
     except Exception as e:
         logger.error(f"Erro ao salvar instância (async): {e}")

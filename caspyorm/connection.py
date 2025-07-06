@@ -1,5 +1,6 @@
 # caspyorm/connection.py
 
+import asyncio
 from cassandra.cluster import Cluster
 from cassandra.auth import PlainTextAuthProvider
 from typing import List, Optional, Dict, Any
@@ -79,6 +80,9 @@ class ConnectionManager:
         """
         Conecta ao cluster Cassandra (assíncrono).
         
+        Nota: A conexão inicial do cluster é síncrona, mas as operações subsequentes
+        podem ser assíncronas. Usamos asyncio.to_thread para evitar bloqueio do event loop.
+        
         Args:
             contact_points: Lista de endereços dos nós do cluster
             port: Porta do Cassandra (padrão: 9042)
@@ -92,21 +96,23 @@ class ConnectionManager:
             if username and password:
                 auth_provider = PlainTextAuthProvider(username=username, password=password)
             
-            # Criar cluster
-            self.cluster = Cluster(
-                contact_points=contact_points,
-                port=port,
-                auth_provider=auth_provider,
-                **kwargs
-            )
+            # Criar cluster e conectar usando thread separada para evitar bloqueio
+            def _connect():
+                cluster = Cluster(
+                    contact_points=contact_points,
+                    port=port,
+                    auth_provider=auth_provider,
+                    **kwargs
+                )
+                return cluster.connect()
             
-            # Conectar e obter sessão (usar a mesma sessão para operações assíncronas)
-            self.async_session = self.cluster.connect()
+            self.async_session = await asyncio.to_thread(_connect)
+            self.cluster = self.async_session.cluster
             self._is_async_connected = True
             
             # Usar keyspace se especificado
             if keyspace:
-                self.use_keyspace_async(keyspace)
+                await self.use_keyspace_async(keyspace)
             
             logger.info(f"Conectado ao Cassandra (ASSÍNCRONO) em {contact_points}:{port}")
             
@@ -136,20 +142,22 @@ class ConnectionManager:
             logger.error(f"Erro ao usar keyspace {keyspace}: {e}")
             raise
 
-    def use_keyspace_async(self, keyspace: str) -> None:
+    async def use_keyspace_async(self, keyspace: str) -> None:
         """Define o keyspace ativo (assíncrono)."""
         if not self.async_session:
             raise RuntimeError("Não há conexão assíncrona ativa com o Cassandra")
         
         try:
-            # Criar keyspace se não existir
-            self.async_session.execute(f"""
-                CREATE KEYSPACE IF NOT EXISTS {keyspace}
-                WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
-            """)
+            # Criar keyspace se não existir usando thread separada
+            def _create_keyspace():
+                if self.async_session:
+                    self.async_session.execute(f"""
+                        CREATE KEYSPACE IF NOT EXISTS {keyspace}
+                        WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
+                    """)
+                    self.async_session.set_keyspace(keyspace)
             
-            # Usar o keyspace
-            self.async_session.set_keyspace(keyspace)
+            await asyncio.to_thread(_create_keyspace)
             self.keyspace = keyspace
             
             logger.info(f"Usando keyspace (ASSÍNCRONO): {keyspace}")
@@ -184,7 +192,8 @@ class ConnectionManager:
                 future = self.async_session.execute_async(query, parameters)
             else:
                 future = self.async_session.execute_async(query)
-            return future.result()
+            # ResponseFuture não é awaitable, precisamos usar asyncio.to_thread para obter o resultado
+            return await asyncio.to_thread(future.result)
         except Exception as e:
             logger.error(f"Erro ao executar query (async): {e}")
             logger.error(f"Query: {query}")
@@ -208,14 +217,16 @@ class ConnectionManager:
 
     async def disconnect_async(self) -> None:
         """Desconecta do cluster Cassandra (assíncrono)."""
-        if self.async_session:
-            self.async_session.shutdown()
-            self.async_session = None
+        def _disconnect():
+            if self.async_session:
+                self.async_session.shutdown()
+                self.async_session = None
+            
+            if self.cluster:
+                self.cluster.shutdown()
+                self.cluster = None
         
-        if self.cluster:
-            self.cluster.shutdown()
-            self.cluster = None
-        
+        await asyncio.to_thread(_disconnect)
         self._is_async_connected = False
         self.keyspace = None
         

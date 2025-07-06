@@ -1,5 +1,6 @@
 # caspyorm/model.py (REVISADO)
 
+import asyncio
 from typing import Any, ClassVar, Dict, Optional, List, Type
 from typing_extensions import Self
 import json
@@ -24,29 +25,47 @@ class Model(metaclass=ModelMetaclass):
     def __init__(self, **kwargs: Any):
         self.__dict__["_data"] = {}
         for key, field_obj in self.model_fields.items():
+            # Obter valor dos kwargs ou None
             value = kwargs.get(key)
+            
+            # Aplicar default se valor for None
             if value is None and field_obj.default is not None:
                 value = field_obj.default() if callable(field_obj.default) else field_obj.default
-            # Validação de campo required
+            
+            # Inicializar coleções vazias se valor ainda for None
+            if value is None and hasattr(field_obj, 'python_type'):
+                value = self._initialize_empty_collection(field_obj.python_type)
+            
+            # Validar campo required após inicialização
             if value is None and field_obj.required:
                 raise ValidationError(f"Campo '{key}' é obrigatório e não foi fornecido.")
-            # Inicialização de coleções vazias
-            if value is None and hasattr(field_obj, 'python_type') and field_obj.python_type in (list, set, dict):
-                if field_obj.python_type is list:
-                    value = []
-                elif field_obj.python_type is set:
-                    value = set()
-                elif field_obj.python_type is dict:
-                    value = {}
-            # Validação de tipo para coleções
-            if hasattr(field_obj, 'python_type') and field_obj.python_type in (list, set, dict) and value is not None:
+            
+            # Converter valor usando to_python se necessário
+            if value is not None:
                 try:
                     value = field_obj.to_python(value)
-                except TypeError as e:
-                    raise TypeError(str(e))
-            elif value is not None and not isinstance(value, field_obj.python_type):
-                value = field_obj.to_python(value)
+                except (TypeError, ValueError) as e:
+                    raise ValidationError(f"Valor inválido para campo '{key}': {e}")
+            
             self.__dict__[key] = value
+    
+    def _initialize_empty_collection(self, python_type: type) -> Any:
+        """
+        Inicializa uma coleção vazia baseada no tipo Python.
+        
+        Args:
+            python_type: Tipo da coleção (list, set, dict)
+            
+        Returns:
+            Coleção vazia do tipo especificado ou None se não for uma coleção
+        """
+        if python_type is list:
+            return []
+        elif python_type is set:
+            return set()
+        elif python_type is dict:
+            return {}
+        return None
 
     def __setattr__(self, key: str, value: Any):
         if key in self.model_fields:
@@ -171,7 +190,8 @@ class Model(metaclass=ModelMetaclass):
             from .connection import get_async_session
             session = get_async_session()
             prepared = session.prepare(cql)
-            session.execute_async(prepared, params).result()
+            future = session.execute_async(prepared, params)
+            await asyncio.to_thread(future.result)
             logger.info(f"Instância atualizada (ASSÍNCRONO): {self.__class__.__name__} com campos: {list(validated_data.keys())}")
         except Exception as e:
             logger.error(f"Erro ao atualizar instância (async): {e}")
@@ -215,8 +235,31 @@ class Model(metaclass=ModelMetaclass):
         if not instances:
             return []
         
-        # TODO: Implementar bulk_create_async no QuerySet
-        return QuerySet(cls).bulk_create(instances)
+        # Implementar lógica assíncrona real
+        from .connection import get_async_session
+        from ._internal.query_builder import build_insert_cql
+        
+        session = get_async_session()
+        
+        # Criar batch de queries
+        batch_queries = []
+        for instance in instances:
+            cql = build_insert_cql(instance.__caspy_schema__)
+            params = list(instance.model_dump().values())
+            batch_queries.append((cql, params))
+        
+        # Executar batch assíncrono
+        try:
+            for cql, params in batch_queries:
+                prepared = session.prepare(cql)
+                future = session.execute_async(prepared, params)
+                await asyncio.to_thread(future.result)
+            
+            logger.info(f"Bulk create assíncrono concluído: {len(instances)} instâncias")
+            return instances
+        except Exception as e:
+            logger.error(f"Erro no bulk create assíncrono: {e}")
+            raise
 
     @classmethod
     def get(cls, **kwargs: Any) -> Optional["Model"]:
@@ -354,8 +397,28 @@ class Model(metaclass=ModelMetaclass):
         Raises:
             ValidationError: Se o campo não existe ou não é uma coleção.
         """
-        # TODO: Implementar update_collection_async
-        return self.update_collection(field_name, add, remove)
+        if field_name not in self.model_fields:
+            raise ValidationError(f"Campo '{field_name}' não existe no modelo {self.__class__.__name__}")
+        
+        from ._internal.query_builder import build_collection_update_cql
+        cql, params = build_collection_update_cql(
+            self.__caspy_schema__,
+            field_name,
+            add=add,
+            remove=remove,
+            pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
+        )
+        try:
+            from .connection import get_async_session
+            session = get_async_session()
+            prepared = session.prepare(cql)
+            future = session.execute_async(prepared, params)
+            await asyncio.to_thread(future.result)
+            logger.info(f"Coleção '{field_name}' atualizada (ASSÍNCRONO) para a instância: {self}")
+        except Exception as e:
+            logger.error(f"Erro ao atualizar coleção (async): {e}")
+            raise
+        return self
 
     @classmethod
     def create_model(cls, name: str, fields: Dict[str, Any], table_name: Optional[str] = None) -> Type:

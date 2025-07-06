@@ -3,6 +3,8 @@
 import logging
 from typing import Any, Dict, Tuple, List, Optional
 
+from .cql_types import get_cql_type
+
 logger = logging.getLogger(__name__)
 
 def build_insert_cql(schema: Dict[str, Any]) -> str:
@@ -15,7 +17,7 @@ def build_insert_cql(schema: Dict[str, Any]) -> str:
     
     return f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
 
-def build_select_cql(schema: Dict[str, Any], columns: Optional[List[str]] = None, filters: Optional[Dict[str, Any]] = None, limit: Optional[int] = None, ordering: Optional[List[str]] = None) -> Tuple[str, List[Any]]:
+def build_select_cql(schema: Dict[str, Any], columns: Optional[List[str]] = None, filters: Optional[Dict[str, Any]] = None, limit: Optional[int] = None, ordering: Optional[List[str]] = None, allow_filtering: bool = False) -> Tuple[str, List[Any]]:
     """Constrói uma query SELECT ... WHERE ... ORDER BY ... LIMIT com suporte a operadores."""
     table_name = schema['table_name']
     
@@ -81,8 +83,7 @@ def build_select_cql(schema: Dict[str, Any], columns: Optional[List[str]] = None
         cql += f" LIMIT ?"
         params.append(limit)
 
-    # Adicionar ALLOW FILTERING quando há filtros
-    if filters:
+    if allow_filtering:
         cql += " ALLOW FILTERING"
             
     return cql, params
@@ -96,7 +97,7 @@ def build_create_table_cql(schema: Dict[str, Any]) -> str:
     # Construir definições de colunas (sem PRIMARY KEY aqui)
     column_definitions = []
     for field_name, field_info in fields.items():
-        cql_type = _get_cql_type(field_info['type'])
+        cql_type = get_cql_type(field_info['type'])
         column_def = f"{field_name} {cql_type}"
         column_definitions.append(column_def)
     
@@ -122,39 +123,14 @@ def build_create_table_cql(schema: Dict[str, Any]) -> str:
 
 def build_add_column_cql(table_name: str, column_name: str, column_type: str) -> str:
     """Constrói uma query ALTER TABLE para adicionar uma nova coluna."""
-    cql_type = _get_cql_type(column_type)
+    cql_type = get_cql_type(column_type)
     return f"ALTER TABLE {table_name} ADD {column_name} {cql_type};"
 
 def build_drop_column_cql(table_name: str, column_name: str) -> str:
     """Constrói uma query ALTER TABLE para remover uma coluna."""
     return f"ALTER TABLE {table_name} DROP {column_name};"
 
-def _get_cql_type(field_type: str) -> str:
-    """Converte o tipo do campo para CQL."""
-    # Se o tipo já contém '<', significa que é um tipo composto (list<text>, etc.)
-    # e já está no formato correto
-    if '<' in field_type:
-        return field_type
-    
-    type_mapping = {
-        'text': 'text',
-        'uuid': 'uuid',
-        'int': 'int',
-        'bigint': 'bigint',
-        'float': 'float',
-        'double': 'double',
-        'boolean': 'boolean',
-        'timestamp': 'timestamp',
-        'date': 'date',
-        'time': 'time',
-        'blob': 'blob',
-        'decimal': 'decimal',
-        'varint': 'varint',
-        'inet': 'inet',
-        'varchar': 'varchar'
-    }
-    
-    return type_mapping.get(field_type, 'text')
+
 
 def build_count_cql(schema: Dict[str, Any], filters: Optional[Dict[str, Any]] = None) -> Tuple[str, List[Any]]:
     """Constrói uma query SELECT COUNT(*) ... WHERE."""

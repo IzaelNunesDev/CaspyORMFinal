@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "caspyorm"
-version = "0.1.2"
+version = "0.1.4"
 authors = [
   { name="CaspyORM Team", email="team@caspyorm.dev" },
 ]
@@ -93,6 +93,9 @@ exclude = [
     ".mypy_cache/",
     ".ruff_cache/",
     ".pypirc",
+    "coverage.xml",
+    "dist/",
+    ".gitignore",
 ]
 
 [tool.ruff]
@@ -173,5 +176,5 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
-]
-asyncio_mode = "auto" 
+    "asyncio: marca testes que usam async/await",
+] 

@@ -45,6 +45,8 @@ class BaseField:
         """Converte um valor vindo do Cassandra para um tipo Python."""
         if value is None:
             return None
+        if isinstance(value, self.python_type):
+            return value
         try:
             return self.python_type(value)
         except (TypeError, ValueError) as e:
@@ -117,27 +119,55 @@ class Timestamp(BaseField):
     cql_type = 'timestamp'
     python_type = datetime  # Usamos datetime para timestamp
 
+    def __init__(self, **kwargs):
+        # Formatos de data comuns para tentar converter strings
+        self.date_formats = [
+            "%Y-%m-%d %H:%M:%S.%f",  # 2023-12-25 14:30:45.123456
+            "%Y-%m-%d %H:%M:%S",     # 2023-12-25 14:30:45
+            "%Y-%m-%dT%H:%M:%S.%f",  # 2023-12-25T14:30:45.123456
+            "%Y-%m-%dT%H:%M:%S",     # 2023-12-25T14:30:45
+            "%Y-%m-%d",              # 2023-12-25
+            "%d/%m/%Y %H:%M:%S",     # 25/12/2023 14:30:45
+            "%d/%m/%Y",              # 25/12/2023
+            "%m/%d/%Y %H:%M:%S",     # 12/25/2023 14:30:45
+            "%m/%d/%Y",              # 12/25/2023
+        ]
+        super().__init__(**kwargs)
+
     def to_python(self, value: Any) -> Any:
         if value is None:
             return None
         if isinstance(value, datetime):
             return value
         if isinstance(value, (int, float)):
+            # Assumir que é timestamp Unix (segundos desde epoch)
+            # Se for maior que 1e12, provavelmente é em milissegundos
             return datetime.fromtimestamp(value / 1000 if value > 1e12 else value)
         if isinstance(value, str):
+            # Tentar ISO format primeiro (mais comum)
             try:
                 return datetime.fromisoformat(value)
-            except Exception:
+            except ValueError:
                 pass
+            
+            # Tentar formatos conhecidos
+            for fmt in self.date_formats:
+                try:
+                    return datetime.strptime(value, fmt)
+                except ValueError:
+                    continue
+            
+            # Tentar dateutil se disponível
             try:
-                return datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f")
-            except Exception:
+                from dateutil import parser
+                return parser.parse(value)
+            except ImportError:
                 pass
-            try:
-                return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-            except Exception:
+            except ValueError:
                 pass
-            raise TypeError(f"Não foi possível converter string '{value}' para datetime")
+            
+            raise TypeError(f"Não foi possível converter string '{value}' para datetime. "
+                          f"Formatos suportados: ISO format, {', '.join(self.date_formats)}")
         raise TypeError(f"Não foi possível converter {value!r} para datetime")
 
     def to_cql(self, value: Any) -> Any:
@@ -234,10 +264,10 @@ class Set(BaseField):
     def to_cql(self, value: Any) -> Any:
         if value is None:
             return None
-        result = []
+        result = set()
         for item in value:
             try:
-                result.append(self.inner_field.to_cql(item))
+                result.add(self.inner_field.to_cql(item))
             except TypeError as e:
                 raise TypeError(f"Não foi possível converter item '{item}' do set para o tipo {self.inner_field.python_type.__name__}: {e}")
         return result

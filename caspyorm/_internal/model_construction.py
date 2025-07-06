@@ -29,12 +29,13 @@ class ModelMetaclass(type):
                 del attrs[key]
 
             # Processa as anotações de tipo (e.g., nome: fields.Text())
-            annotations = attrs.get('__annotations__', {})
+            annotations = attrs.get('__annotations__', {}).copy() # Copia para evitar modificar durante a iteração
             for key, field_type in annotations.items():
-                 if isinstance(field_type, BaseField):
-                     model_fields[key] = field_type
-                     # Opcional: remover a anotação para limpar o namespace da classe final
-                     # del attrs['__annotations__'][key]
+                if key not in model_fields and isinstance(field_type, BaseField):
+                    model_fields[key] = field_type
+                    # Remove a anotação para limpar o namespace da classe final
+                    if '__annotations__' in attrs and key in attrs['__annotations__']:
+                        del attrs['__annotations__'][key]
 
         if not model_fields:
             raise TypeError(f'O modelo "{name}" não definiu nenhum campo.')
@@ -85,6 +86,6 @@ class ModelMetaclass(type):
         # Define as chaves primárias
         schema['primary_keys'] = schema['partition_keys'] + schema['clustering_keys']
         if not schema['primary_keys']:
-            raise TypeError("O modelo deve ter pelo menos uma 'partition_key' ou 'primary_key'.")
+            raise ValueError("O modelo deve ter pelo menos uma 'partition_key' ou 'primary_key'.")
 
         return schema

@@ -48,6 +48,11 @@ except ImportError:
     
     class BaseModel:
         pass
+    
+    class status:
+        HTTP_503_SERVICE_UNAVAILABLE = 503
+        HTTP_400_BAD_REQUEST = 400
+        HTTP_500_INTERNAL_SERVER_ERROR = 500
 
 from ..connection import get_session as _get_session, get_async_session as _get_async_session
 from ..model import Model
@@ -195,12 +200,30 @@ def create_response_model(
     
     # Filtrar campos se necessário
     fields = {}
-    for field_name, field_info in pydantic_model.model_fields.items():
-        if include and field_name not in include:
-            continue
-        if exclude and field_name in exclude:
-            continue
-        fields[field_name] = (field_info.annotation, field_info.default)
+    
+    # Detectar versão do Pydantic
+    try:
+        import pydantic
+        pydantic_v2 = pydantic.VERSION.startswith('2')
+    except ImportError:
+        pydantic_v2 = False
+    
+    if pydantic_v2:
+        # Pydantic v2: usar model_fields
+        for field_name, field_info in pydantic_model.model_fields.items():
+            if include and field_name not in include:
+                continue
+            if exclude and field_name in exclude:
+                continue
+            fields[field_name] = (field_info.annotation, field_info.default)
+    else:
+        # Pydantic v1: usar __fields__
+        for field_name, field_info in pydantic_model.__fields__.items():
+            if include and field_name not in include:
+                continue
+            if exclude and field_name in exclude:
+                continue
+            fields[field_name] = (field_info.type_, field_info.default)
     
     # Criar nome do modelo
     model_name = name or f"{model_class.__name__}Response"
