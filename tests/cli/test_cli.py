@@ -13,11 +13,7 @@ from caspyorm.model import Model
 from caspyorm.fields import Text
 
 # Adicionar o diretório raiz ao path para importar o CLI
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 from cli.main import app, get_config, find_model_class, parse_filters
 
 # Configurar o runner do Typer
@@ -223,5 +219,4 @@ class TestCLIEnvironment:
             config = get_config()
             assert config['port'] == 9043
 
-if __name__ == '__main__':
-    pytest.main([__file__]) 
+# Removido: execução manual de testes - use pytest para executar os testes 

@@ -64,7 +64,7 @@ fastapi = [
 ]
 
 [project.scripts]
-caspy = "cli.main:app"
+caspyorm = "cli.main:app"
 
 [project.urls]
 Homepage = "https://github.com/caspyorm/caspyorm"

@@ -7,6 +7,7 @@ import importlib.util
 import os
 import sys
 from typing import List, Optional
+import functools
 
 # Use tomllib for Python 3.11+ TOML parsing
 try:
@@ -41,6 +42,26 @@ from caspyorm._internal.migration_model import Migration
 """
 CaspyORM CLI - Ferramenta de linha de comando para interagir com modelos CaspyORM.
 """
+
+# --- Decorators ---
+def run_safe_cli(func):
+    """Decorator para tratamento seguro de erros em comandos CLI."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except typer.Exit as e:
+            if e.exit_code != 0:
+                console.print(f"[bold red]Erro CLI ({e.exit_code})[/bold red]")
+            raise  # Sempre re-raise para Typer
+        except SystemExit as e:
+            if getattr(e, 'code', 0) != 0:
+                console.print(f"[bold red]Erro sistêmico (Exit Code: {e.code})[/bold red]")
+            raise  # Sempre re-raise para Typer
+        except Exception as e:
+            console.print(f"[bold red]Erro inesperado:[/bold red] {e}")
+            raise typer.Exit(1)
+    return wrapper
 
 # --- Configuração ---
 app = typer.Typer(
@@ -284,6 +305,17 @@ async def run_query(
     force: bool = False,
     keyspace: Optional[str] = None,
 ):
+    # Validação de argumentos
+    allowed_commands = ['get', 'filter', 'count', 'exists', 'delete']
+    if command not in allowed_commands:
+        console.print(f"[bold red]Comando inválido: '{command}'. Comandos permitidos: {', '.join(allowed_commands)}[/bold red]")
+        raise typer.Exit(1)
+    
+    if command == 'delete' and not filters and not force:
+        console.print("[bold red]⚠️  ATENÇÃO: Comando 'delete' sem filtros pode deletar todos os registros![/bold red]")
+        console.print("[yellow]Use --filter para especificar critérios ou --force para confirmar.[/yellow]")
+        console.print("[yellow]Exemplo: --filter id=123 --force[/yellow]")
+        raise typer.Exit(1)
     """Executa uma query no banco de dados."""
     config = get_config()
     target_keyspace = keyspace or config["keyspace"]
@@ -401,6 +433,7 @@ async def run_query(
 @app.command(
     help="Busca ou filtra objetos no banco de dados.\n\nOperadores suportados nos filtros:\n- __gt, __lt, __gte, __lte, __in, __contains\nExemplo: --filter idade__gt=30 --filter nome__in=joao,maria"
 )
+@run_safe_cli
 def query(
     model_name: str = typer.Argument(
         ...,
@@ -1032,7 +1065,94 @@ def version_cmd():
     console.print(f"[bold blue]CaspyORM CLI[/bold blue] v{CLI_VERSION}")
 
 
+@app.command(help="Executa uma query SQL direta no Cassandra.")
+@run_safe_cli
+def sql(
+    query: str = typer.Argument(
+        ...,
+        help="Query SQL/CQL a ser executada.",
+    ),
+    keyspace: Optional[str] = typer.Option(
+        None,
+        "--keyspace",
+        "-k",
+        help="Keyspace a ser usado (sobrescreve CASPY_KEYSPACE).",
+    ),
+):
+    """
+    Executa uma query SQL/CQL direta no Cassandra.
+    
+    Exemplos:
+    - caspy sql "SELECT * FROM nyc_restaurants LIMIT 5"
+    - caspy sql "SELECT name, cuisine FROM nyc_restaurants WHERE borough = 'Manhattan'"
+    - caspy sql "SELECT COUNT(*) FROM nyc_restaurants"
+    """
+    asyncio.run(run_sql_query(query, keyspace))
+
+
+async def run_sql_query(query: str, keyspace: Optional[str]):
+    """Executa uma query SQL direta."""
+    config = get_config()
+    target_keyspace = keyspace or config["keyspace"]
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(
+                f"Conectando ao Cassandra (keyspace: {target_keyspace})...", total=None
+            )
+
+            await connection.connect_async(
+                contact_points=config["hosts"], keyspace=target_keyspace
+            )
+            progress.update(task, description="Conectado! Executando query...")
+
+            # Executar a query
+            result = await connection.execute_async(query)
+            progress.update(task, description="Query executada! Processando resultados...")
+
+            # Processar resultados
+            if result:
+                # Criar tabela com resultados
+                table = Table(title=f"Resultados da Query")
+                
+                # Converter ResultSet para lista para facilitar o processamento
+                rows = list(result)
+                
+                if rows:
+                    first_row = rows[0]
+                    if hasattr(first_row, '_fields'):
+                        # ResultSet com namedtuple
+                        headers = first_row._fields
+                        for header in headers:
+                            table.add_column(header, justify="left")
+
+                        for row in rows:
+                            table.add_row(*(str(getattr(row, h)) for h in headers))
+                    else:
+                        # Resultado simples
+                        console.print(f"[bold green]Resultado:[/bold green] {result}")
+                        return
+
+                    console.print(table)
+                    console.print(f"[bold green]Total de registros:[/bold green] {len(rows)}")
+                else:
+                    console.print("[yellow]Query executada com sucesso, mas não retornou resultados.[/yellow]")
+            else:
+                console.print("[yellow]Query executada com sucesso, mas não retornou resultados.[/yellow]")
+
+    except Exception as e:
+        console.print(f"[bold red]❌ Erro ao executar query:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    finally:
+        await safe_disconnect()
+
+
 @app.command(help="Inicia um shell interativo para executar comandos CaspyORM.")
+@run_safe_cli
 def shell():
     """Inicia um shell interativo."""
     console.print("[bold green]Bem-vindo ao CaspyORM Shell![/bold green]")

@@ -2,20 +2,16 @@
 Testes para comandos do CLI do CaspyORM.
 """
 
-import os
-import sys
-from unittest.mock import patch, MagicMock, AsyncMock
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 import re
 import types
 from caspyorm.model import Model
 from caspyorm.fields import Text
+from unittest.mock import patch, MagicMock, AsyncMock
 
 # Adicionar o diretório raiz ao path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from cli.main import app, CLI_VERSION
 
 def strip_ansi(text):
@@ -30,6 +26,9 @@ def test_cli_help():
     result = runner.invoke(app, ['--help'])
     assert result.exit_code == 0
     assert "CaspyORM CLI" in result.stdout
+    assert "usage" in result.stdout.lower()  # Verifica se tem o usage do Typer
+    assert "migrate" in result.stdout  # Verifica se o comando migrate está listado
+    assert "query" in result.stdout  # Verifica se o comando query está listado
 
 def test_cli_version():
     """Testa se o comando version funciona."""
@@ -37,7 +36,7 @@ def test_cli_version():
     runner = CliRunner()
     
     result = runner.invoke(app, ['version'])
-    clean = strip_ansi(result.stdout + result.stderr)
+    clean = strip_ansi(result.stdout)
     if str(CLI_VERSION) not in clean:
         raise AssertionError(f"Output do comando version não contém a versão esperada!\nOutput capturado:\n{clean}")
 
@@ -124,16 +123,4 @@ def test_models_command_no_models():
             assert result.exit_code == 0
             assert "Nenhum modelo CaspyORM encontrado nos caminhos de busca." in result.stdout
 
-if __name__ == '__main__':
-    # Executar testes de comandos
-    test_cli_help()
-    test_cli_version()
-    test_connect_command_help()
-    test_models_command_help()
-    test_query_command_help()
-    test_info_command()
-    test_show_models_path_error()
-    test_query_command_missing_arguments()
-    test_models_command_with_mock_module()
-    test_models_command_no_models()
-    print("✅ Todos os testes de comandos passaram!") 
+# Removido: execução manual de testes - use pytest para executar os testes 
