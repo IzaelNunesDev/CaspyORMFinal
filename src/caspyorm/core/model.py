@@ -79,65 +79,110 @@ class Model(metaclass=ModelMetaclass):
     def model_dump_json(self, by_alias: bool = False, indent: Optional[int] = None) -> str:
         return model_to_json(self, by_alias=by_alias, indent=indent)
 
-    def save(self) -> Self:
-        # VALIDAÇÃO ADICIONADA: Garante que as chaves primárias não são nulas ao salvar.
+    # --- HOOKS DE EVENTOS ---
+    def before_save(self):
+        """Hook chamado antes de salvar a instância."""
+        pass
+
+    def after_save(self):
+        """Hook chamado após salvar a instância."""
+        pass
+
+    def before_update(self, update_data: dict):
+        """Hook chamado antes de atualizar a instância."""
+        pass
+
+    def after_update(self, update_data: dict):
+        """Hook chamado após atualizar a instância."""
+        pass
+
+    def before_delete(self):
+        """Hook chamado antes de deletar a instância."""
+        pass
+
+    def after_delete(self):
+        """Hook chamado após deletar a instância."""
+        pass
+
+    def save(self, ttl: int = None) -> Self:
+        """
+        Salva (insere ou atualiza) a instância no Cassandra.
+        Se ttl for fornecido, define o tempo de expiração em segundos.
+        """
         for pk_name in self.__caspy_schema__['primary_keys']:
             if getattr(self, pk_name, None) is None:
                 raise ValidationError(f"Primary key '{pk_name}' cannot be None before saving.")
+        try:
+            self.before_save()
+        except Exception as e:
+            logger.error(f"Exceção em before_save: {e}")
+            raise
         from .query import save_instance
-        save_instance(self)
+        save_instance(self, ttl=ttl)
+        try:
+            self.after_save()
+        except Exception as e:
+            logger.error(f"Exceção em after_save: {e}")
+            raise
         return self
 
-    async def save_async(self) -> Self:
-        """Salva (insere ou atualiza) a instância no Cassandra (assíncrono)."""
-        # VALIDAÇÃO ADICIONADA: Garante que as chaves primárias não são nulas ao salvar.
+    async def save_async(self, ttl: int = None) -> Self:
+        """
+        Salva (insere ou atualiza) a instância no Cassandra (assíncrono).
+        Se ttl for fornecido, define o tempo de expiração em segundos.
+        """
         for pk_name in self.__caspy_schema__['primary_keys']:
             if getattr(self, pk_name, None) is None:
                 raise ValidationError(f"Primary key '{pk_name}' cannot be None before saving.")
-        
+        try:
+            self.before_save()
+        except Exception as e:
+            logger.error(f"Exceção em before_save: {e}")
+            raise
         from .query import save_instance_async
-        await save_instance_async(self)
+        await save_instance_async(self, ttl=ttl)
+        try:
+            self.after_save()
+        except Exception as e:
+            logger.error(f"Exceção em after_save: {e}")
+            raise
         return self
 
-    async def update(self, **kwargs: Any) -> Self:
+    async def update(self, ttl: int = None, **kwargs: Any) -> Self:
         """
         Atualiza parcialmente esta instância no banco de dados.
-        Diferente de save(), que faz um upsert completo, update() gera
-        uma query UPDATE específica apenas para os campos fornecidos.
+        Se ttl for fornecido, define o tempo de expiração em segundos.
         """
         if not kwargs:
             logger.warning("update() chamado sem campos para atualizar")
             return self
-        
-        # Validar e converter os valores
         validated_data = {}
         for key, value in kwargs.items():
             if key not in self.model_fields:
                 raise ValidationError(f"Campo '{key}' não existe no modelo {self.__class__.__name__}")
-            
             field_obj = self.model_fields[key]
             if value is not None:
                 try:
                     validated_value = field_obj.to_python(value)
                     validated_data[key] = validated_value
-                    # Atualizar o atributo da instância
                     setattr(self, key, validated_value)
                 except (TypeError, ValueError) as e:
                     raise ValidationError(f"Valor inválido para campo '{key}': {e}")
-        
         if not validated_data:
             logger.warning("Nenhum campo válido fornecido para update()")
             return self
-        
-        # Gerar query UPDATE
+        try:
+            self.before_update(validated_data)
+        except Exception as e:
+            logger.error(f"Exceção em before_update: {e}")
+            raise
         from .._internal.query_builder import build_update_cql
         cql, params = build_update_cql(
             self.__caspy_schema__,
             update_data=validated_data,
-            pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
+            pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']},
+            ttl=ttl
         )
-        
-        # Suporte a batch
         from ..types.batch import get_active_batch
         active_batch = get_active_batch()
         if active_batch:
@@ -153,25 +198,25 @@ class Model(metaclass=ModelMetaclass):
             except Exception as e:
                 logger.error(f"Erro ao atualizar instância: {e}")
                 raise
-        
+        try:
+            self.after_update(validated_data)
+        except Exception as e:
+            logger.error(f"Exceção em after_update: {e}")
+            raise
         return self
 
-    async def update_async(self, **kwargs: Any) -> Self:
+    async def update_async(self, ttl: int = None, **kwargs: Any) -> Self:
         """
         Atualiza parcialmente esta instância no banco de dados (assíncrono).
-        Diferente de save_async(), que faz um upsert completo, update_async() gera
-        uma query UPDATE específica apenas para os campos fornecidos.
+        Se ttl for fornecido, define o tempo de expiração em segundos.
         """
         if not kwargs:
             logger.warning("update_async() chamado sem campos para atualizar")
             return self
-        
-        # Validar e converter os valores
         validated_data = {}
         for key, value in kwargs.items():
             if key not in self.model_fields:
                 raise ValidationError(f"Campo '{key}' não existe no modelo {self.__class__.__name__}")
-            
             field_obj = self.model_fields[key]
             if value is not None:
                 try:
@@ -180,16 +225,20 @@ class Model(metaclass=ModelMetaclass):
                     setattr(self, key, validated_value)
                 except (TypeError, ValueError) as e:
                     raise ValidationError(f"Valor inválido para campo '{key}': {e}")
-        
         if not validated_data:
             logger.warning("Nenhum campo válido fornecido para update_async()")
             return self
-        
+        try:
+            self.before_update(validated_data)
+        except Exception as e:
+            logger.error(f"Exceção em before_update: {e}")
+            raise
         from .._internal.query_builder import build_update_cql
         cql, params = build_update_cql(
             self.__caspy_schema__,
             update_data=validated_data,
-            pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
+            pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']},
+            ttl=ttl
         )
         from ..types.batch import get_active_batch
         active_batch = get_active_batch()
@@ -207,6 +256,11 @@ class Model(metaclass=ModelMetaclass):
             except Exception as e:
                 logger.error(f"Erro ao atualizar instância (async): {e}")
                 raise
+        try:
+            self.after_update(validated_data)
+        except Exception as e:
+            logger.error(f"Exceção em after_update: {e}")
+            raise
         return self
 
     @classmethod
@@ -222,41 +276,37 @@ class Model(metaclass=ModelMetaclass):
         return await instance.save_async()
 
     @classmethod
-    def bulk_create(cls, instances: List["Model"]) -> List["Model"]:
-        """Cria múltiplas instâncias em uma única operação batch."""
+    def bulk_create(cls, instances: List["Model"], ttl: int = None) -> List["Model"]:
+        """
+        Cria múltiplas instâncias em uma única operação batch.
+        Se ttl for fornecido, define o tempo de expiração em segundos.
+        """
         if not instances:
             return []
-        
-        # Validar que todas as instâncias são do mesmo tipo
         model_class = instances[0].__class__
         if not all(isinstance(instance, model_class) for instance in instances):
             raise ValidationError("Todas as instâncias devem ser do mesmo tipo")
-        
-        # Usar batch se disponível
         from ..types.batch import BatchQuery
         with BatchQuery() as batch:
             for instance in instances:
-                instance.save()
-        
+                instance.save(ttl=ttl)
         return instances
 
     @classmethod
-    async def bulk_create_async(cls, instances: List["Model"]) -> List["Model"]:
-        """Cria múltiplas instâncias em uma única operação batch (assíncrono)."""
+    async def bulk_create_async(cls, instances: List["Model"], ttl: int = None) -> List["Model"]:
+        """
+        Cria múltiplas instâncias em uma única operação batch (assíncrono).
+        Se ttl for fornecido, define o tempo de expiração em segundos.
+        """
         if not instances:
             return []
-        
-        # Validar que todas as instâncias são do mesmo tipo
         model_class = instances[0].__class__
         if not all(isinstance(instance, model_class) for instance in instances):
             raise ValidationError("Todas as instâncias devem ser do mesmo tipo")
-        
-        # Usar batch se disponível
         from ..types.batch import BatchQuery
         with BatchQuery() as batch:
             for instance in instances:
-                await instance.save_async()
-        
+                await instance.save_async(ttl=ttl)
         return instances
 
     @classmethod
@@ -309,6 +359,11 @@ class Model(metaclass=ModelMetaclass):
         for pk_name in self.__caspy_schema__['primary_keys']:
             if getattr(self, pk_name, None) is None:
                 raise ValidationError(f"Primary key '{pk_name}' cannot be None before deleting.")
+        try:
+            self.before_delete()
+        except Exception as e:
+            logger.error(f"Exceção em before_delete: {e}")
+            raise
         from .._internal.query_builder import build_delete_cql
         cql, params = build_delete_cql(
             self.__caspy_schema__,
@@ -328,12 +383,22 @@ class Model(metaclass=ModelMetaclass):
             except Exception as e:
                 logger.error(f"Erro ao deletar instância: {e}")
                 raise
+        try:
+            self.after_delete()
+        except Exception as e:
+            logger.error(f"Exceção em after_delete: {e}")
+            raise
 
     async def delete_async(self) -> None:
         """Remove esta instância do banco de dados (assíncrono)."""
         for pk_name in self.__caspy_schema__['primary_keys']:
             if getattr(self, pk_name, None) is None:
                 raise ValidationError(f"Primary key '{pk_name}' cannot be None before deleting.")
+        try:
+            self.before_delete()
+        except Exception as e:
+            logger.error(f"Exceção em before_delete: {e}")
+            raise
         from .._internal.query_builder import build_delete_cql
         cql, params = build_delete_cql(
             self.__caspy_schema__,
@@ -355,15 +420,15 @@ class Model(metaclass=ModelMetaclass):
             except Exception as e:
                 logger.error(f"Erro ao deletar instância (async): {e}")
                 raise
+        try:
+            self.after_delete()
+        except Exception as e:
+            logger.error(f"Exceção em after_delete: {e}")
+            raise
 
     async def update_collection(self, field_name: str, add: Any = None, remove: Any = None) -> Self:
         """
         Atualiza uma coleção (list, set, map) adicionando ou removendo elementos.
-        
-        Args:
-            field_name: Nome do campo coleção
-            add: Elementos para adicionar
-            remove: Elementos para remover
         """
         if field_name not in self.model_fields:
             raise ValidationError(f"Campo '{field_name}' não existe no modelo {self.__class__.__name__}")
@@ -398,37 +463,14 @@ class Model(metaclass=ModelMetaclass):
                 logger.error(f"Erro ao atualizar coleção: {e}")
                 raise
         
-        # Atualizar o valor local
-        current_value = getattr(self, field_name, [])
-        if add is not None:
-            if isinstance(current_value, list):
-                current_value.extend(add)
-            elif isinstance(current_value, set):
-                current_value.update(add)
-            elif isinstance(current_value, dict):
-                current_value.update(add)
-        
-        if remove is not None:
-            if isinstance(current_value, list):
-                for item in remove:
-                    if item in current_value:
-                        current_value.remove(item)
-            elif isinstance(current_value, set):
-                current_value.difference_update(remove)
-            elif isinstance(current_value, dict):
-                for key in remove:
-                    current_value.pop(key, None)
-        
+        # Após sucesso, invalidar o valor local
+        if field_name in self.__dict__:
+            del self.__dict__[field_name]
         return self
 
     async def update_collection_async(self, field_name: str, add: Any = None, remove: Any = None) -> Self:
         """
         Atualiza uma coleção (list, set, map) adicionando ou removendo elementos (assíncrono).
-        
-        Args:
-            field_name: Nome do campo coleção
-            add: Elementos para adicionar
-            remove: Elementos para remover
         """
         if field_name not in self.model_fields:
             raise ValidationError(f"Campo '{field_name}' não existe no modelo {self.__class__.__name__}")
@@ -465,27 +507,9 @@ class Model(metaclass=ModelMetaclass):
                 logger.error(f"Erro ao atualizar coleção (async): {e}")
                 raise
         
-        # Atualizar o valor local
-        current_value = getattr(self, field_name, [])
-        if add is not None:
-            if isinstance(current_value, list):
-                current_value.extend(add)
-            elif isinstance(current_value, set):
-                current_value.update(add)
-            elif isinstance(current_value, dict):
-                current_value.update(add)
-        
-        if remove is not None:
-            if isinstance(current_value, list):
-                for item in remove:
-                    if item in current_value:
-                        current_value.remove(item)
-            elif isinstance(current_value, set):
-                current_value.difference_update(remove)
-            elif isinstance(current_value, dict):
-                for key in remove:
-                    current_value.pop(key, None)
-        
+        # Após sucesso, invalidar o valor local
+        if field_name in self.__dict__:
+            del self.__dict__[field_name]
         return self
 
     @classmethod

@@ -23,3 +23,13 @@ class ValidationError(CaspyORMException):
 class QueryError(CaspyORMException):
     """Levantada quando há um erro na construção ou execução de uma query."""
     pass 
+
+class TimeoutError(CaspyORMException):
+    """Levantada quando uma operação excede o tempo limite."""
+    pass
+
+class LWTError(CaspyORMException):
+    """Levantada quando uma transação leve (IF) falha."""
+    def __init__(self, message="LWT condition was not met.", existing=None):
+        super().__init__(message)
+        self.existing = existing 

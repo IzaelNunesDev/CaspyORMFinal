@@ -188,6 +188,7 @@ class List(BaseField):
     """
     cql_type = 'list'
     python_type = list
+    collection_type = list
 
     def __init__(self, inner_field: BaseField, **kwargs):
         if not isinstance(inner_field, BaseField):
@@ -238,6 +239,7 @@ class Set(BaseField):
     """
     cql_type = 'set'
     python_type = set
+    collection_type = set
 
     def __init__(self, inner_field: BaseField, **kwargs):
         if not isinstance(inner_field, BaseField):
@@ -283,6 +285,7 @@ class Map(BaseField):
     """
     cql_type = 'map'
     python_type = dict
+    collection_type = dict
 
     def __init__(self, key_field: BaseField, value_field: BaseField, **kwargs):
         if not isinstance(key_field, BaseField) or not isinstance(value_field, BaseField):

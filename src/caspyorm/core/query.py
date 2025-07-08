@@ -10,6 +10,7 @@ from cassandra import ConsistencyLevel
 import logging
 import warnings
 from typing import TYPE_CHECKING
+from ..utils.exceptions import QueryError, ConnectionError, TimeoutError, LWTError
 if TYPE_CHECKING:
     from .model import Model
 
@@ -73,9 +74,13 @@ class QuerySet:
         session = get_session()
         # Sempre preparar a query para garantir suporte a parâmetros posicionais
         prepared = session.prepare(cql)
-        result_set = session.execute(prepared, params)
-        self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
-        logger.debug(f"Executando query (SÍNCRONO): {cql} com parâmetros: {params}")
+        try:
+            result_set = session.execute(prepared, params)
+            self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
+            logger.debug(f"Executando query (SÍNCRONO): {cql} com parâmetros: {params}")
+        except Exception as e:
+            logger.error(f"Erro ao executar query (SÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     async def _execute_query_async(self):
         """Executa a query no banco de dados e armazena os resultados no cache (assíncrono)."""
@@ -91,9 +96,13 @@ class QuerySet:
         session = get_async_session()
         # Usar o método prepare_async com cache
         prepared = await connection.prepare_async(cql)
-        result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
-        self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
-        logger.debug(f"Executando query (ASSÍNCRONO): {cql} com parâmetros: {params}")
+        try:
+            result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
+            self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
+            logger.debug(f"Executando query (ASSÍNCRONO): {cql} com parâmetros: {params}")
+        except Exception as e:
+            logger.error(f"Erro ao executar query (ASSÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     def allow_filtering(self) -> Self:
         """
@@ -179,9 +188,13 @@ class QuerySet:
         )
         session = get_session()
         prepared = session.prepare(cql)
-        result_set = session.execute(prepared, params)
-        row = result_set.one()
-        return row.count if row else 0
+        try:
+            result_set = session.execute(prepared, params)
+            row = result_set.one()
+            return row.count if row else 0
+        except Exception as e:
+            logger.error(f"Erro ao contar registros (SÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     async def count_async(self) -> int:
         """
@@ -196,9 +209,13 @@ class QuerySet:
         from . import connection
         session = get_async_session()
         prepared = await connection.prepare_async(cql)
-        result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
-        row = result_set.one()
-        return row.count if row else 0
+        try:
+            result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
+            row = result_set.one()
+            return row.count if row else 0
+        except Exception as e:
+            logger.error(f"Erro ao contar registros (ASSÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     def exists(self) -> bool:
         """
@@ -219,8 +236,12 @@ class QuerySet:
         )
         session = get_session()
         prepared = session.prepare(cql)
-        result_set = session.execute(prepared, params)
-        return result_set.one() is not None
+        try:
+            result_set = session.execute(prepared, params)
+            return result_set.one() is not None
+        except Exception as e:
+            logger.error(f"Erro ao verificar existência (SÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     async def exists_async(self) -> bool:
         """
@@ -242,8 +263,12 @@ class QuerySet:
         from . import connection
         session = get_async_session()
         prepared = await connection.prepare_async(cql)
-        result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
-        return result_set.one() is not None
+        try:
+            result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
+            return result_set.one() is not None
+        except Exception as e:
+            logger.error(f"Erro ao verificar existência (ASSÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     def delete(self) -> int:
         """
@@ -252,6 +277,16 @@ class QuerySet:
         """
         if not self._filters:
             raise ValueError("A deleção em massa sem filtros não é permitida por segurança.")
+        
+        # VALIDAÇÃO ADICIONADA: Garante que todas as chaves de partição estão presentes
+        partition_keys = set(self.model_cls.__caspy_schema__.get('partition_keys', []))
+        filter_keys = set(f.split('__')[0] for f in self._filters.keys())  # Considera operadores como __gt
+
+        if not partition_keys.issubset(filter_keys):
+            raise ValueError(
+                f"Para deletar, você deve filtrar por todas as chaves de partição. "
+                f"Chaves necessárias: {list(partition_keys)}. Filtros fornecidos: {list(filter_keys)}"
+            )
         
         cql, params = query_builder.build_delete_cql(
             self.model_cls.__caspy_schema__,
@@ -265,9 +300,13 @@ class QuerySet:
             return 1
         session = get_session()
         prepared = session.prepare(cql)
-        result = session.execute(prepared, params)
-        logger.info(f"Deletados registros: {self.model_cls.__name__} com filtros: {self._filters}")
-        return 1  # Cassandra não retorna número de linhas afetadas
+        try:
+            result = session.execute(prepared, params)
+            logger.info(f"Deletados registros: {self.model_cls.__name__} com filtros: {self._filters}")
+            return 1  # Cassandra não retorna número de linhas afetadas
+        except Exception as e:
+            logger.error(f"Erro ao deletar registros (SÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     async def delete_async(self) -> int:
         """
@@ -276,6 +315,16 @@ class QuerySet:
         """
         if not self._filters:
             raise ValueError("A deleção em massa sem filtros não é permitida por segurança.")
+        
+        # VALIDAÇÃO ADICIONADA: Garante que todas as chaves de partição estão presentes
+        partition_keys = set(self.model_cls.__caspy_schema__.get('partition_keys', []))
+        filter_keys = set(f.split('__')[0] for f in self._filters.keys())  # Considera operadores como __gt
+
+        if not partition_keys.issubset(filter_keys):
+            raise ValueError(
+                f"Para deletar, você deve filtrar por todas as chaves de partição. "
+                f"Chaves necessárias: {list(partition_keys)}. Filtros fornecidos: {list(filter_keys)}"
+            )
         
         cql, params = query_builder.build_delete_cql(
             self.model_cls.__caspy_schema__,
@@ -290,9 +339,13 @@ class QuerySet:
         from . import connection
         session = get_async_session()
         prepared = await connection.prepare_async(cql)
-        result = await asyncio.wrap_future(session.execute_async(prepared, params))
-        logger.info(f"Deletados registros (ASSÍNCRONO): {self.model_cls.__name__} com filtros: {self._filters}")
-        return 1  # Cassandra não retorna número de linhas afetadas
+        try:
+            result = await asyncio.wrap_future(session.execute_async(prepared, params))
+            logger.info(f"Deletados registros (ASSÍNCRONO): {self.model_cls.__name__} com filtros: {self._filters}")
+            return 1  # Cassandra não retorna número de linhas afetadas
+        except Exception as e:
+            logger.error(f"Erro ao deletar registros (ASSÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     def page(self, page_size: int = 100, paging_state: Any = None):
         """
@@ -309,18 +362,22 @@ class QuerySet:
         )
         session = get_session()
         prepared = session.prepare(cql)
-        bound = prepared.bind(params)
-        if paging_state:
-            bound.paging_state = paging_state
-        
-        result_set = session.execute(bound)
-        results = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
-        
-        return {
-            'results': results,
-            'paging_state': result_set.paging_state,
-            'has_more_pages': result_set.has_more_pages
-        }
+        try:
+            bound = prepared.bind(params)
+            if paging_state:
+                bound.paging_state = paging_state
+            
+            result_set = session.execute(bound)
+            results = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
+            
+            return {
+                'results': results,
+                'paging_state': result_set.paging_state,
+                'has_more_pages': result_set.has_more_pages
+            }
+        except Exception as e:
+            logger.error(f"Erro ao paginar (SÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     async def page_async(self, page_size: int = 100, paging_state: Any = None):
         """
@@ -338,18 +395,22 @@ class QuerySet:
         from . import connection
         session = get_async_session()
         prepared = await connection.prepare_async(cql)
-        bound = prepared.bind(params)
-        if paging_state:
-            bound.paging_state = paging_state
-        
-        result_set = await asyncio.wrap_future(session.execute_async(bound))
-        results = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
-        
-        return {
-            'results': results,
-            'paging_state': result_set.paging_state,
-            'has_more_pages': result_set.has_more_pages
-        }
+        try:
+            bound = prepared.bind(params)
+            if paging_state:
+                bound.paging_state = paging_state
+            
+            result_set = await asyncio.wrap_future(session.execute_async(bound))
+            results = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
+            
+            return {
+                'results': results,
+                'paging_state': result_set.paging_state,
+                'has_more_pages': result_set.has_more_pages
+            }
+        except Exception as e:
+            logger.error(f"Erro ao paginar (ASSÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
     def bulk_create(self, instances: List["Model"]) -> List["Model"]:
         """
@@ -375,58 +436,53 @@ class QuerySet:
 
 # --- Funções de Conveniência ---
 
-def save_instance(instance) -> None:
+def save_instance(instance, ttl: int = None) -> None:
     """
     Salva uma instância de modelo no banco de dados (síncrono).
     Usa INSERT com IF NOT EXISTS para evitar duplicatas.
     """
     from .._internal.query_builder import build_insert_cql
-    
     # Construir query INSERT
-    cql = build_insert_cql(instance.__caspy_schema__)
+    cql = build_insert_cql(instance.__caspy_schema__, ttl=ttl)
     params = list(instance.model_dump().values())
-    
-    # Verificar se há batch ativo
     from ..types.batch import get_active_batch
     active_batch = get_active_batch()
-    
     if active_batch:
-        # Adicionar ao batch ativo
         active_batch.add(cql, params)
         logger.debug(f"Adicionado ao batch: {instance.__class__.__name__}")
     else:
-        # Executar imediatamente
         session = get_session()
         prepared = session.prepare(cql)
-        session.execute(prepared, params)
-        logger.info(f"Instância salva: {instance.__class__.__name__}")
+        try:
+            session.execute(prepared, params)
+            logger.info(f"Instância salva: {instance.__class__.__name__}")
+        except Exception as e:
+            logger.error(f"Erro ao salvar instância (SÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
-async def save_instance_async(instance) -> None:
+async def save_instance_async(instance, ttl: int = None) -> None:
     """
     Salva uma instância de modelo no banco de dados (assíncrono).
     Usa INSERT com IF NOT EXISTS para evitar duplicatas.
     """
     from .._internal.query_builder import build_insert_cql
-    
-    # Construir query INSERT
-    cql = build_insert_cql(instance.__caspy_schema__)
+    cql = build_insert_cql(instance.__caspy_schema__, ttl=ttl)
     params = list(instance.model_dump().values())
-    
-    # Verificar se há batch ativo
     from ..types.batch import get_active_batch
     active_batch = get_active_batch()
-    
     if active_batch:
-        # Adicionar ao batch ativo
         active_batch.add(cql, params)
         logger.debug(f"Adicionado ao batch (async): {instance.__class__.__name__}")
     else:
-        # Executar imediatamente
         session = get_async_session()
         prepared = session.prepare(cql)
-        future = session.execute_async(prepared, params)
-        await asyncio.to_thread(future.result)
-        logger.info(f"Instância salva (ASSÍNCRONO): {instance.__class__.__name__}")
+        try:
+            future = session.execute_async(prepared, params)
+            await asyncio.to_thread(future.result)
+            logger.info(f"Instância salva (ASSÍNCRONO): {instance.__class__.__name__}")
+        except Exception as e:
+            logger.error(f"Erro ao salvar instância (ASSÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
+            raise QueryError(str(e))
 
 def get_one(model_cls: Type["Model"], **kwargs: Any) -> Optional["Model"]:
     """Busca um único registro."""

@@ -6,6 +6,7 @@ from cassandra.auth import PlainTextAuthProvider
 from cassandra.query import PreparedStatement, BoundStatement
 from typing import List, Optional, Dict, Any, Type
 import logging
+from ..utils.exceptions import ConnectionError, TimeoutError, QueryError, LWTError
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -137,7 +138,7 @@ class ConnectionManager:
             logger.info(f"Conectado ao Cassandra (SÍNCRONO) em {contact_points}:{port}")
         except Exception as e:
             logger.error(f"Erro ao conectar ao Cassandra: {e}")
-            raise
+            raise ConnectionError(str(e))
 
     async def connect_async(
         self, 
@@ -161,8 +162,8 @@ class ConnectionManager:
                 auth_provider=auth_provider,
                 **kwargs
             )
-            # O driver não tem connect_async, então usamos o método síncrono
-            self.session = self.cluster.connect()
+            # Executa a chamada bloqueante em uma thread separada
+            self.session = await asyncio.to_thread(self.cluster.connect)
             self.async_session = self.session  # Compatibilidade
             self._is_connected = True
             self._is_async_connected = True
@@ -171,7 +172,7 @@ class ConnectionManager:
             logger.info(f"Conectado ao Cassandra (ASSÍNCRONO) em {contact_points}:{port}")
         except Exception as e:
             logger.error(f"Erro ao conectar ao Cassandra (async): {e}")
-            raise
+            raise ConnectionError(str(e))
     
     def use_keyspace(self, keyspace: str) -> None:
         """Define o keyspace ativo (síncrono)."""
@@ -194,7 +195,7 @@ class ConnectionManager:
             
         except Exception as e:
             logger.error(f"Erro ao usar keyspace {keyspace}: {e}")
-            raise
+            raise QueryError(str(e))
 
     async def use_keyspace_async(self, keyspace: str) -> None:
         """Define o keyspace ativo (assíncrono)."""
@@ -219,7 +220,7 @@ class ConnectionManager:
             
         except Exception as e:
             logger.error(f"Erro ao usar keyspace {keyspace} (async): {e}")
-            raise
+            raise QueryError(str(e))
 
 
     
@@ -236,7 +237,7 @@ class ConnectionManager:
             logger.error(f"Erro ao executar query: {e}")
             logger.error(f"Query: {query}")
             logger.error(f"Parâmetros: {parameters}")
-            raise
+            raise QueryError(str(e))
 
     async def execute_async(self, query: str, parameters: Optional[Any] = None):
         """Executa uma query CQL (assíncrono)."""
@@ -249,7 +250,7 @@ class ConnectionManager:
             logger.error(f"Erro ao executar query (async): {e}")
             logger.error(f"Query: {query}")
             logger.error(f"Parâmetros: {parameters}")
-            raise
+            raise QueryError(str(e))
 
     async def prepare_async(self, cql_query: str) -> PreparedStatement:
         """Prepara uma query CQL (assíncrono) com cache."""
@@ -260,14 +261,14 @@ class ConnectionManager:
             return self._prepared_statement_cache[cql_query]
 
         try:
-            future = self.async_session.prepare_async(cql_query)
-            prepared = await asyncio.wrap_future(future)
+            # Executa a chamada bloqueante em uma thread separada
+            prepared = await asyncio.to_thread(self.async_session.prepare, cql_query)
             self._prepared_statement_cache[cql_query] = prepared
             return prepared
         except Exception as e:
             logger.error(f"Erro ao preparar query (async): {e}")
             logger.error(f"Query: {cql_query}")
-            raise
+            raise QueryError(str(e))
     
     def disconnect(self) -> None:
         """Desconecta do cluster Cassandra (síncrono)."""
@@ -291,7 +292,8 @@ class ConnectionManager:
                 self.session.shutdown()
                 self.session = None
             if self.cluster:
-                self.cluster.shutdown()
+                # Executa a chamada bloqueante em uma thread separada
+                await asyncio.to_thread(self.cluster.shutdown)
                 self.cluster = None
             self.async_session = None
             self._is_connected = False

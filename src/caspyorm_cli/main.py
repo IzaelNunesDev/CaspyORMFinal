@@ -685,23 +685,16 @@ def migrate_new(
     file_path = os.path.join(MIGRATIONS_DIR, file_name)
 
     try:
-        template_path = os.path.join(
-            os.path.dirname(__file__), "migration_template.py.j2"
-        )
+        # Forma segura que funciona tanto em desenvolvimento quanto em produção
+        import importlib.resources
         
-        # Check if template exists (important for packaged apps)
-        if not os.path.exists(template_path):
-             console.print(f"[bold red]Erro:[/bold red] Template de migração não encontrado em {template_path}")
-             raise typer.Exit(1)
-
-        with open(template_path) as f:
-            template_content = f.read()
+        template_content = importlib.resources.files('caspyorm_cli.templates').joinpath('migration_template.py.j2').read_text(encoding='utf-8')
 
         formatted_template = template_content.format(
             name=sanitized_name, created_at=datetime.now()
         )
 
-        with open(file_path, "w") as f:
+        with open(file_path, "w", encoding='utf-8') as f:
             f.write(formatted_template)
         console.print(f"[bold green]Migração criada:[/bold green] {file_path}")
     except Exception as e:

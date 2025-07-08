@@ -20,66 +20,23 @@ logger = logging.getLogger(__name__)
 
 def get_cassandra_table_schema(session: Session, keyspace: str, table_name: str) -> Optional[Dict[str, Any]]:
     """
-    Obtém o schema atual de uma tabela no Cassandra.
+    Obtém o schema atual de uma tabela no Cassandra usando a API oficial do driver.
     Retorna None se a tabela não existir.
     """
     try:
-        # Consulta sem ORDER BY, pois Cassandra não permite ORDER BY em system_schema.columns
-        # Obter informações das colunas
-        columns_query = f"""
-            SELECT column_name, kind, type
-            FROM system_schema.columns
-            WHERE keyspace_name = '{keyspace}'
-            AND table_name = '{table_name}'
-        """
-        columns_rows = session.execute(columns_query)
-        if not columns_rows:
+        if not session.cluster:
+            logger.error("Cluster não está disponível na sessão")
+            return None
+            
+        cluster_meta = session.cluster.metadata
+        try:
+            keyspace_meta = cluster_meta.keyspaces[keyspace]
+            table_meta = keyspace_meta.tables[table_name]
+        except KeyError:
+            # A tabela ou o keyspace não existem
             return None
         
-        # Obter a definição da chave primária da tabela
-        table_query = f"""
-            SELECT primary_key
-            FROM system_schema.tables
-            WHERE keyspace_name = '{keyspace}'
-            AND table_name = '{table_name}'
-        """
-        table_row = session.execute(table_query).one()
-        if not table_row:
-            return None # Tabela não encontrada, embora as colunas tenham sido
-
-        # Parsear a primary_key do formato string para uma lista de tuplas (partition_keys, clustering_keys)
-        # Ex: "((id, name), age)" -> (('id', 'name'), ('age',))
-        primary_key_str = table_row.primary_key
-        
-        # Remove os parênteses externos e divide as chaves de partição e clusterização
-        pk_parts_str = primary_key_str[1:-1] # Remove o primeiro e último parêntese
-        
-        partition_keys_str = ""
-        clustering_keys_str = ""
-
-        # Encontra o índice do primeiro parêntese de fechamento para separar partition keys
-        first_closing_paren_idx = pk_parts_str.find(')')
-        if first_closing_paren_idx != -1:
-            partition_keys_str = pk_parts_str[1:first_closing_paren_idx] # Remove o parêntese de abertura
-            if first_closing_paren_idx + 2 < len(pk_parts_str): # Verifica se há clustering keys
-                clustering_keys_str = pk_parts_str[first_closing_paren_idx + 2:]
-        else: # Não há parênteses para partition keys, então é uma única partition key
-            partition_keys_str = pk_parts_str.split(',')[0].strip()
-            if ',' in pk_parts_str:
-                clustering_keys_str = pk_parts_str[len(partition_keys_str) + 1:].strip()
-
-        partition_keys = [k.strip() for k in partition_keys_str.split(',') if k.strip()]
-        clustering_keys = [k.strip() for k in clustering_keys_str.split(',') if k.strip()]
-
-        # Estrutura para armazenar o schema
-        schema = {
-            'fields': {},
-            'primary_keys': [],
-            'partition_keys': partition_keys,
-            'clustering_keys': clustering_keys
-        }
-        
-        # Mapear tipos CQL para tipos Python (mantido para compatibilidade e clareza)
+        # Mapear tipos CQL para tipos Python (mantido para compatibilidade)
         type_mapping = {
             'text': 'text', 'varchar': 'text', 'int': 'int', 'bigint': 'int',
             'float': 'float', 'double': 'float', 'boolean': 'boolean', 'uuid': 'uuid',
@@ -90,22 +47,24 @@ def get_cassandra_table_schema(session: Session, keyspace: str, table_name: str)
             'tinyint': 'int', 'timeuuid': 'uuid', 'ascii': 'text', 'json': 'text'
         }
         
-        for row in columns_rows:
-            column_name = row.column_name
-            column_type = row.type
-            column_kind = row.kind # 'partition_key', 'clustering', 'regular', 'static'
-            
-            base_type = column_type.split('<')[0].split('(')[0].lower()
+        # Construir schema a partir dos metadados da API oficial
+        schema = {
+            'fields': {},
+            'primary_keys': [col.name for col in table_meta.primary_key],
+            'partition_keys': [col.name for col in table_meta.partition_key],
+            'clustering_keys': [col.name for col in table_meta.clustering_key]
+        }
+        
+        # Adicionar informações dos campos
+        for col_name, col_meta in table_meta.columns.items():
+            base_type = col_meta.cql_type.split('<')[0].split('(')[0].lower()
             mapped_type = type_mapping.get(base_type, base_type)
             
-            schema['fields'][column_name] = {
+            schema['fields'][col_name] = {
                 'type': mapped_type,
-                'cql_type': column_type,
-                'kind': column_kind
+                'cql_type': col_meta.cql_type,
+                'kind': col_meta.kind
             }
-        
-        # Construir primary_keys na ordem correta
-        schema['primary_keys'] = partition_keys + clustering_keys
         
         return schema
         

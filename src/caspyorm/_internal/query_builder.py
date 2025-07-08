@@ -8,15 +8,18 @@ from ..core.fields import BaseField
 
 logger = logging.getLogger(__name__)
 
-def build_insert_cql(schema: Dict[str, Any]) -> str:
-    """Constrói uma query INSERT."""
+def build_insert_cql(schema: Dict[str, Any], ttl: Optional[int] = None) -> str:
+    """Constrói uma query INSERT com suporte a TTL."""
     table_name = schema['table_name']
     field_names = list(schema['fields'].keys())
     
     columns = ", ".join(field_names)
     placeholders = ", ".join(['?'] * len(field_names))
-    
-    return f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+    ttl_clause = f"USING TTL {ttl}" if ttl is not None else ""
+    if ttl_clause:
+        return f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) {ttl_clause}"
+    else:
+        return f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
 
 def build_select_cql(schema: Dict[str, Any], columns: Optional[List[str]] = None, filters: Optional[Dict[str, Any]] = None, limit: Optional[int] = None, ordering: Optional[List[str]] = None, allow_filtering: bool = False) -> Tuple[str, List[Any]]:
     """Constrói uma query SELECT ... WHERE ... ORDER BY ... LIMIT com suporte a operadores."""
@@ -199,17 +202,9 @@ def build_delete_cql(schema: Dict[str, Any], filters: Dict[str, Any]) -> Tuple[s
     cql = f"DELETE FROM {table_name} WHERE {where_clauses}"
     return cql, params
 
-def build_update_cql(schema: Dict[str, Any], update_data: Dict[str, Any], pk_filters: Dict[str, Any]) -> Tuple[str, List[Any]]:
+def build_update_cql(schema: Dict[str, Any], update_data: Dict[str, Any], pk_filters: Dict[str, Any], ttl: Optional[int] = None) -> Tuple[str, List[Any]]:
     """
-    Constrói uma query UPDATE ... SET ... WHERE.
-    
-    Args:
-        schema: Schema do modelo
-        update_data: Dicionário com campos e valores para atualizar
-        pk_filters: Dicionário com filtros de chave primária para WHERE
-        
-    Returns:
-        Tupla (cql, params) com a query e parâmetros
+    Constrói uma query UPDATE ... SET ... WHERE ... [USING TTL].
     """
     table_name = schema['table_name']
     
@@ -228,7 +223,11 @@ def build_update_cql(schema: Dict[str, Any], update_data: Dict[str, Any], pk_fil
     where_clause = " AND ".join(where_clauses)
     
     # Construir query completa
-    cql = f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}"
+    ttl_clause = f"USING TTL {ttl}" if ttl is not None else ""
+    if ttl_clause:
+        cql = f"UPDATE {table_name} {ttl_clause} SET {set_clause} WHERE {where_clause}"
+    else:
+        cql = f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}"
     
     # Parâmetros: primeiro os valores do SET, depois os filtros do WHERE
     params = list(update_data.values()) + list(pk_filters.values())
