@@ -1,10 +1,14 @@
 from cassandra.query import BatchStatement
 from ..core.connection import get_session
+from ..core.connection import get_async_session
 from contextvars import ContextVar, Token
 from typing import Optional
+import asyncio
 
 # ContextVar para batch ativo (correção para asyncio)
 _active_batch_context: ContextVar[Optional["BatchQuery"]] = ContextVar("active_batch", default=None)
+# ContextVar para batch assíncrono
+_active_async_batch_context: ContextVar[Optional["AsyncBatchQuery"]] = ContextVar("active_async_batch", default=None)
 
 class BatchQuery:
     """
@@ -36,6 +40,42 @@ class BatchQuery:
             if self.token:
                 _active_batch_context.reset(self.token)
 
+# AsyncBatchQuery para uso em contextos assíncronos
+class AsyncBatchQuery:
+    """
+    Gerenciador de contexto assíncrono para batch de operações Cassandra.
+    Uso:
+        async with AsyncBatchQuery() as batch:
+            ... # await Model.save_async() etc
+    """
+    def __init__(self):
+        self.statements = []  # Lista de (query, params)
+        self.token: Optional[Token] = None
+
+    def add(self, query, params):
+        self.statements.append((query, params))
+
+    async def __aenter__(self):
+        self.token = _active_async_batch_context.set(self)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if not exc_type and self.statements:
+                session = get_async_session()
+                batch = BatchStatement()
+                for query, params in self.statements:
+                    batch.add(query, params)
+                future = session.execute_async(batch)
+                await asyncio.to_thread(future.result)
+        finally:
+            if self.token:
+                _active_async_batch_context.reset(self.token)
+
 # Função utilitária para acessar o batch ativo
 def get_active_batch() -> Optional[BatchQuery]:
     return _active_batch_context.get() 
+
+# Função utilitária para acessar o batch assíncrono ativo
+def get_active_async_batch() -> Optional[AsyncBatchQuery]:
+    return _active_async_batch_context.get() 
