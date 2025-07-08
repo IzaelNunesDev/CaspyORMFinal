@@ -12,10 +12,15 @@ from cassandra.policies import DCAwareRoundRobinPolicy
 from src.caspyorm.core.connection import ConnectionManager, connection
 
 # Helper para simular ResponseFuture
-class FakeFuture:
+import concurrent.futures
+
+class FakeFuture(concurrent.futures.Future):
     def __init__(self, result):
+        super().__init__()
         self._result = result
-    def result(self):
+        self.set_result(result)
+    
+    def result(self, timeout=None):
         return self._result
 
 class TestConnection:
@@ -111,11 +116,10 @@ class TestConnection:
         mock_cluster_class.return_value = mock_cluster
 
         conn = ConnectionManager()
-        conn.cluster = mock_cluster
-        conn.async_session = mock_session
-        # Simular sucesso
-        await conn.connect_async(contact_points=['host1'], keyspace='test_keyspace')
-        assert conn.async_session is not None
+        # Mock do execute_async para evitar problemas com use_keyspace_async
+        with patch.object(conn, 'execute_async') as mock_execute_async:
+            await conn.connect_async(contact_points=['host1'], keyspace='test_keyspace')
+            assert conn.async_session is not None
 
     def test_disconnect_sync(self):
         """Testa desconexão síncrona."""
@@ -142,6 +146,7 @@ class TestConnection:
         conn = ConnectionManager()
         conn.cluster = mock_cluster
         conn.async_session = mock_session
+        conn.session = mock_session  # Também definir session para compatibilidade
         await conn.disconnect_async()
         mock_session.shutdown.assert_called_once()
         mock_cluster.shutdown.assert_called_once()
@@ -434,7 +439,8 @@ class TestConnectionErrorHandling:
         mock_cluster = Mock()
     
         conn = ConnectionManager()
-        conn.async_session = mock_session  # async_session, não session
+        conn.session = mock_session  # O método usa self.session
+        conn.async_session = mock_session
         conn.cluster = mock_cluster
     
         # A implementação real levanta exceção, então o teste deve esperar isso

@@ -89,12 +89,8 @@ class QuerySet:
         )
         from . import connection
         session = get_async_session()
-        # PreparedStatement transparente com cache
-        if cql in connection.connection._prepared_statement_cache:
-            prepared = connection.connection._prepared_statement_cache[cql]
-        else:
-            prepared = session.prepare(cql)
-            connection.connection._prepared_statement_cache[cql] = prepared
+        # Usar o método prepare_async com cache
+        prepared = await connection.prepare_async(cql)
         result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
         self._result_cache = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
         logger.debug(f"Executando query (ASSÍNCRONO): {cql} com parâmetros: {params}")
@@ -197,8 +193,9 @@ class QuerySet:
             self.model_cls.__caspy_schema__,
             filters=self._filters
         )
+        from . import connection
         session = get_async_session()
-        prepared = session.prepare(cql)
+        prepared = await connection.prepare_async(cql)
         result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
         row = result_set.one()
         return row.count if row else 0
@@ -242,8 +239,9 @@ class QuerySet:
             ordering=self._ordering,
             allow_filtering=self._allow_filtering
         )
+        from . import connection
         session = get_async_session()
-        prepared = session.prepare(cql)
+        prepared = await connection.prepare_async(cql)
         result_set = await asyncio.wrap_future(session.execute_async(prepared, params))
         return result_set.one() is not None
 
@@ -259,6 +257,12 @@ class QuerySet:
             self.model_cls.__caspy_schema__,
             filters=self._filters
         )
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado delete ao batch (QuerySet): {self.model_cls.__name__}")
+            return 1
         session = get_session()
         prepared = session.prepare(cql)
         result = session.execute(prepared, params)
@@ -277,8 +281,15 @@ class QuerySet:
             self.model_cls.__caspy_schema__,
             filters=self._filters
         )
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado delete ao batch (QuerySet, async): {self.model_cls.__name__}")
+            return 1
+        from . import connection
         session = get_async_session()
-        prepared = session.prepare(cql)
+        prepared = await connection.prepare_async(cql)
         result = await asyncio.wrap_future(session.execute_async(prepared, params))
         logger.info(f"Deletados registros (ASSÍNCRONO): {self.model_cls.__name__} com filtros: {self._filters}")
         return 1  # Cassandra não retorna número de linhas afetadas
@@ -324,8 +335,9 @@ class QuerySet:
             ordering=self._ordering,
             allow_filtering=self._allow_filtering
         )
+        from . import connection
         session = get_async_session()
-        prepared = session.prepare(cql)
+        prepared = await connection.prepare_async(cql)
         bound = prepared.bind(params)
         if paging_state:
             bound.paging_state = paging_state

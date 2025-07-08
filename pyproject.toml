@@ -73,8 +73,19 @@ Repository = "https://github.com/caspyorm/caspyorm"
 "Bug Tracker" = "https://github.com/caspyorm/caspyorm/issues"
 "Source Code" = "https://github.com/caspyorm/caspyorm"
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/config",
+    "/migrations",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/caspyorm", "src/caspyorm_cli"]
+packages = ["caspyorm", "caspyorm_cli"]
+package-dir = {"" = "src"}
 exclude = [
     "tests/",
     "scripts/",

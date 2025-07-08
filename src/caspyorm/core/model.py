@@ -84,6 +84,7 @@ class Model(metaclass=ModelMetaclass):
         for pk_name in self.__caspy_schema__['primary_keys']:
             if getattr(self, pk_name, None) is None:
                 raise ValidationError(f"Primary key '{pk_name}' cannot be None before saving.")
+        from .query import save_instance
         save_instance(self)
         return self
 
@@ -128,7 +129,7 @@ class Model(metaclass=ModelMetaclass):
             logger.warning("Nenhum campo válido fornecido para update()")
             return self
         
-        # Gerar e executar query UPDATE
+        # Gerar query UPDATE
         from .._internal.query_builder import build_update_cql
         cql, params = build_update_cql(
             self.__caspy_schema__,
@@ -136,15 +137,22 @@ class Model(metaclass=ModelMetaclass):
             pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
         )
         
-        try:
-            from .connection import get_session
-            session = get_session()
-            prepared = session.prepare(cql)
-            await session.execute_async(prepared, params)
-            logger.info(f"Instância atualizada: {self.__class__.__name__} com campos: {list(validated_data.keys())}")
-        except Exception as e:
-            logger.error(f"Erro ao atualizar instância: {e}")
-            raise
+        # Suporte a batch
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado update ao batch: {self.__class__.__name__}")
+        else:
+            try:
+                from .connection import get_session
+                session = get_session()
+                prepared = session.prepare(cql)
+                session.execute(prepared, params)
+                logger.info(f"Instância atualizada: {self.__class__.__name__} com campos: {list(validated_data.keys())}")
+            except Exception as e:
+                logger.error(f"Erro ao atualizar instância: {e}")
+                raise
         
         return self
 
@@ -169,7 +177,6 @@ class Model(metaclass=ModelMetaclass):
                 try:
                     validated_value = field_obj.to_python(value)
                     validated_data[key] = validated_value
-                    # Atualizar o atributo da instância
                     setattr(self, key, validated_value)
                 except (TypeError, ValueError) as e:
                     raise ValidationError(f"Valor inválido para campo '{key}': {e}")
@@ -178,25 +185,28 @@ class Model(metaclass=ModelMetaclass):
             logger.warning("Nenhum campo válido fornecido para update_async()")
             return self
         
-        # Gerar e executar query UPDATE
         from .._internal.query_builder import build_update_cql
         cql, params = build_update_cql(
             self.__caspy_schema__,
             update_data=validated_data,
             pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
         )
-        
-        try:
-            from .connection import get_async_session
-            session = get_async_session()
-            prepared = session.prepare(cql)
-            future = session.execute_async(prepared, params)
-            await asyncio.to_thread(future.result)
-            logger.info(f"Instância atualizada (ASSÍNCRONO): {self.__class__.__name__} com campos: {list(validated_data.keys())}")
-        except Exception as e:
-            logger.error(f"Erro ao atualizar instância (async): {e}")
-            raise
-        
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado update ao batch (async): {self.__class__.__name__}")
+        else:
+            try:
+                from .connection import get_async_session
+                session = get_async_session()
+                prepared = session.prepare(cql)
+                future = session.execute_async(prepared, params)
+                await asyncio.to_thread(future.result)
+                logger.info(f"Instância atualizada (ASSÍNCRONO): {self.__class__.__name__} com campos: {list(validated_data.keys())}")
+            except Exception as e:
+                logger.error(f"Erro ao atualizar instância (async): {e}")
+                raise
         return self
 
     @classmethod
@@ -296,49 +306,55 @@ class Model(metaclass=ModelMetaclass):
 
     def delete(self) -> None:
         """Remove esta instância do banco de dados."""
-        # VALIDAÇÃO ADICIONADA: Garante que as chaves primárias não são nulas ao deletar.
         for pk_name in self.__caspy_schema__['primary_keys']:
             if getattr(self, pk_name, None) is None:
                 raise ValidationError(f"Primary key '{pk_name}' cannot be None before deleting.")
-        
         from .._internal.query_builder import build_delete_cql
         cql, params = build_delete_cql(
             self.__caspy_schema__,
             filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
         )
-        
-        try:
-            from .connection import get_session
-            session = get_session()
-            session.execute(cql, params)
-            logger.info(f"Instância deletada: {self.__class__.__name__}")
-        except Exception as e:
-            logger.error(f"Erro ao deletar instância: {e}")
-            raise
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado delete ao batch: {self.__class__.__name__}")
+        else:
+            try:
+                from .connection import get_session
+                session = get_session()
+                session.execute(cql, params)
+                logger.info(f"Instância deletada: {self.__class__.__name__}")
+            except Exception as e:
+                logger.error(f"Erro ao deletar instância: {e}")
+                raise
 
     async def delete_async(self) -> None:
         """Remove esta instância do banco de dados (assíncrono)."""
-        # VALIDAÇÃO ADICIONADA: Garante que as chaves primárias não são nulas ao deletar.
         for pk_name in self.__caspy_schema__['primary_keys']:
             if getattr(self, pk_name, None) is None:
                 raise ValidationError(f"Primary key '{pk_name}' cannot be None before deleting.")
-        
         from .._internal.query_builder import build_delete_cql
         cql, params = build_delete_cql(
             self.__caspy_schema__,
             filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
         )
-        
-        try:
-            from .connection import get_async_session
-            session = get_async_session()
-            prepared = session.prepare(cql)
-            future = session.execute_async(prepared, params)
-            await asyncio.to_thread(future.result)
-            logger.info(f"Instância deletada (ASSÍNCRONO): {self.__class__.__name__}")
-        except Exception as e:
-            logger.error(f"Erro ao deletar instância (async): {e}")
-            raise
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado delete ao batch (async): {self.__class__.__name__}")
+        else:
+            try:
+                from .connection import get_async_session
+                session = get_async_session()
+                prepared = session.prepare(cql)
+                future = session.execute_async(prepared, params)
+                await asyncio.to_thread(future.result)
+                logger.info(f"Instância deletada (ASSÍNCRONO): {self.__class__.__name__}")
+            except Exception as e:
+                logger.error(f"Erro ao deletar instância (async): {e}")
+                raise
 
     async def update_collection(self, field_name: str, add: Any = None, remove: Any = None) -> Self:
         """
@@ -366,36 +382,42 @@ class Model(metaclass=ModelMetaclass):
             pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
         )
         
-        try:
-            from .connection import get_session
-            session = get_session()
-            session.execute(cql, params)
-            
-            # Atualizar o valor local
-            current_value = getattr(self, field_name, [])
-            if add is not None:
-                if isinstance(current_value, list):
-                    current_value.extend(add)
-                elif isinstance(current_value, set):
-                    current_value.update(add)
-                elif isinstance(current_value, dict):
-                    current_value.update(add)
-            
-            if remove is not None:
-                if isinstance(current_value, list):
-                    for item in remove:
-                        if item in current_value:
-                            current_value.remove(item)
-                elif isinstance(current_value, set):
-                    current_value.difference_update(remove)
-                elif isinstance(current_value, dict):
-                    for key in remove:
-                        current_value.pop(key, None)
-            
-            logger.info(f"Coleção '{field_name}' atualizada: {self.__class__.__name__}")
-        except Exception as e:
-            logger.error(f"Erro ao atualizar coleção: {e}")
-            raise
+        # Suporte a batch
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado update_collection ao batch: {self.__class__.__name__}")
+        else:
+            try:
+                from .connection import get_session
+                session = get_session()
+                session.execute(cql, params)
+                logger.info(f"Coleção '{field_name}' atualizada: {self.__class__.__name__}")
+            except Exception as e:
+                logger.error(f"Erro ao atualizar coleção: {e}")
+                raise
+        
+        # Atualizar o valor local
+        current_value = getattr(self, field_name, [])
+        if add is not None:
+            if isinstance(current_value, list):
+                current_value.extend(add)
+            elif isinstance(current_value, set):
+                current_value.update(add)
+            elif isinstance(current_value, dict):
+                current_value.update(add)
+        
+        if remove is not None:
+            if isinstance(current_value, list):
+                for item in remove:
+                    if item in current_value:
+                        current_value.remove(item)
+            elif isinstance(current_value, set):
+                current_value.difference_update(remove)
+            elif isinstance(current_value, dict):
+                for key in remove:
+                    current_value.pop(key, None)
         
         return self
 
@@ -425,38 +447,44 @@ class Model(metaclass=ModelMetaclass):
             pk_filters={pk: getattr(self, pk) for pk in self.__caspy_schema__['primary_keys']}
         )
         
-        try:
-            from .connection import get_async_session
-            session = get_async_session()
-            prepared = session.prepare(cql)
-            future = session.execute_async(prepared, params)
-            await asyncio.to_thread(future.result)
-            
-            # Atualizar o valor local
-            current_value = getattr(self, field_name, [])
-            if add is not None:
-                if isinstance(current_value, list):
-                    current_value.extend(add)
-                elif isinstance(current_value, set):
-                    current_value.update(add)
-                elif isinstance(current_value, dict):
-                    current_value.update(add)
-            
-            if remove is not None:
-                if isinstance(current_value, list):
-                    for item in remove:
-                        if item in current_value:
-                            current_value.remove(item)
-                elif isinstance(current_value, set):
-                    current_value.difference_update(remove)
-                elif isinstance(current_value, dict):
-                    for key in remove:
-                        current_value.pop(key, None)
-            
-            logger.info(f"Coleção '{field_name}' atualizada (ASSÍNCRONO): {self.__class__.__name__}")
-        except Exception as e:
-            logger.error(f"Erro ao atualizar coleção (async): {e}")
-            raise
+        # Suporte a batch
+        from ..types.batch import get_active_batch
+        active_batch = get_active_batch()
+        if active_batch:
+            active_batch.add(cql, params)
+            logger.debug(f"Adicionado update_collection ao batch (async): {self.__class__.__name__}")
+        else:
+            try:
+                from .connection import get_async_session
+                session = get_async_session()
+                prepared = session.prepare(cql)
+                future = session.execute_async(prepared, params)
+                await asyncio.to_thread(future.result)
+                logger.info(f"Coleção '{field_name}' atualizada (ASSÍNCRONO): {self.__class__.__name__}")
+            except Exception as e:
+                logger.error(f"Erro ao atualizar coleção (async): {e}")
+                raise
+        
+        # Atualizar o valor local
+        current_value = getattr(self, field_name, [])
+        if add is not None:
+            if isinstance(current_value, list):
+                current_value.extend(add)
+            elif isinstance(current_value, set):
+                current_value.update(add)
+            elif isinstance(current_value, dict):
+                current_value.update(add)
+        
+        if remove is not None:
+            if isinstance(current_value, list):
+                for item in remove:
+                    if item in current_value:
+                        current_value.remove(item)
+            elif isinstance(current_value, set):
+                current_value.difference_update(remove)
+            elif isinstance(current_value, dict):
+                for key in remove:
+                    current_value.pop(key, None)
         
         return self
 

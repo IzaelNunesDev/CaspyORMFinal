@@ -21,6 +21,9 @@ from .core import (
     ConnectionManager, connect, disconnect
 )
 
+# Connection instance
+from .core.connection import connection
+
 # Custom types
 from .types import UserType, BatchQuery
 
@@ -44,6 +47,7 @@ __all__ = [
     'List', 'Set', 'Map', 'Tuple', 'UserDefinedType',
     'QuerySet',
     'ConnectionManager', 'connect', 'disconnect',
+    'connection',
     
     # Types
     'UserType', 'BatchQuery',

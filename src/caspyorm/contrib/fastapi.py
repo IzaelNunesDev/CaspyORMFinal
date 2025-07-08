@@ -113,13 +113,12 @@ def _serialize_value(value):
     Serializa recursivamente valores de UDTs, Tuples e coleções para tipos nativos do Python.
     """
     from ..types.usertype import UserType
-    from ..core.fields import Tuple
     if value is None:
         return None
     if isinstance(value, UserType):
         return {k: _serialize_value(getattr(value, k)) for k in value.model_fields}
     if isinstance(value, tuple):
-        return tuple(_serialize_value(v) for v in value)
+        return [_serialize_value(v) for v in value]  # JSON não suporta tuple, converte para list
     if isinstance(value, list):
         return [_serialize_value(v) for v in value]
     if isinstance(value, set):

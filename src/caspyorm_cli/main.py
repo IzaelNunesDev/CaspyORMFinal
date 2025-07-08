@@ -32,12 +32,12 @@ from rich.table import Table
 from rich.text import Text as RichText
 
 # Import Text from caspyorm.fields
-from ..caspyorm import Model, connection
-from ..caspyorm.core.fields import UUID, Timestamp, Text
-from ..caspyorm.core.model import (
+from caspyorm import Model, connection
+from caspyorm.core.fields import UUID, Timestamp, Text
+from caspyorm.core.model import (
     Model as CaspyModel,
 )
-from ..caspyorm._internal.migration_model import Migration
+from caspyorm._internal.migration_model import Migration
 
 """
 CaspyORM CLI - Ferramenta de linha de comando para interagir com modelos CaspyORM.
@@ -210,6 +210,14 @@ def get_model_names(ctx: typer.Context) -> List[str]:
 
     all_models = discover_models(search_paths)
     return sorted(all_models.keys())
+
+
+def get_model_names_for_completion(incomplete: str) -> List[str]:
+    """Função de autocompletion que não depende do contexto do Typer."""
+    config = get_config()
+    search_paths = get_default_search_paths() + config.get("model_paths", [])
+    all_models = discover_models(search_paths)
+    return [name for name in sorted(all_models.keys()) if name.startswith(incomplete)]
 
 
 def find_model_class(model_name: str) -> type[Model]:
@@ -441,7 +449,7 @@ def query(
     model_name: str = typer.Argument(
         ...,
         help="Nome do modelo (ex: 'usuario', 'livro').",
-        autocompletion=lambda: get_model_names(typer.Context(info_name='query')),
+        autocompletion=get_model_names_for_completion,
     ),
     command: str = typer.Argument(
         ...,
@@ -475,6 +483,8 @@ def query(
 @app.command(help="Lista todos os modelos disponíveis.")
 def models():
     """Lista todos os modelos disponíveis no módulo configurado."""
+    config = get_config()
+    search_paths = get_default_search_paths() + config.get("model_paths", [])
     all_models = discover_models(search_paths)
     # Remove o modelo de Migration interno da lista pública
     all_models.pop('migration', None)
@@ -520,8 +530,38 @@ def connect(
     target_keyspace = keyspace or config["keyspace"]
 
     async def test_connection():
-        config = ctx.obj["config"]
-        target_keyspace = config["keyspace"]
+        config = get_config()
+        target_keyspace = keyspace or config["keyspace"]
+        
+        try:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    f"Conectando ao Cassandra (keyspace: {target_keyspace})...", total=None
+                )
+                await connection.connect_async(
+                    contact_points=config["hosts"], keyspace=target_keyspace
+                )
+                progress.update(task, description="Conectado! Testando query...")
+                
+                # Testa uma query simples
+                result = await connection.execute_async("SELECT release_version FROM system.local")
+                version = result.one().release_version
+                progress.update(task, description="✅ Conexão testada com sucesso!")
+                
+                console.print(f"[bold green]Conexão com Cassandra estabelecida[/bold green]")
+                console.print(f"[green]Versão do Cassandra: {version}[/green]")
+                
+        except Exception as e:
+            console.print(f"[bold red]❌ Erro ao conectar:[/bold red] {e}")
+            raise typer.Exit(1)
+        finally:
+            await safe_disconnect()
+    
+    asyncio.run(test_connection())
 
 
 @app.command(help="Mostra informações sobre a CLI.")
@@ -579,6 +619,7 @@ def ensure_migrations_dir():
     "init", help="Inicializa o sistema de migrações, criando a tabela de controle."
 )
 def migrate_init_sync(
+    ctx: typer.Context,
     keyspace: Optional[str] = typer.Option(
         None,
         "--keyspace",
@@ -588,7 +629,7 @@ def migrate_init_sync(
 ):
     """Cria a tabela caspyorm_migrations se ela não existir."""
     ensure_migrations_dir()
-    asyncio.run(migrate_init_async(keyspace))
+    asyncio.run(migrate_init_async(ctx))
 
 
 async def migrate_init_async(ctx: typer.Context):
@@ -672,6 +713,7 @@ def migrate_new(
     "status", help="Mostra o status das migrações (aplicadas vs. pendentes)."
 )
 def migrate_status_sync(
+    ctx: typer.Context,
     keyspace: Optional[str] = typer.Option(
         None,
         "--keyspace",
@@ -681,7 +723,7 @@ def migrate_status_sync(
 ):
     """Mostra o status das migrações (aplicadas vs. pendentes)."""
     ensure_migrations_dir()
-    asyncio.run(migrate_status_async(keyspace))
+    asyncio.run(migrate_status_async(ctx))
 
 
 async def migrate_status_async(ctx: typer.Context):
@@ -765,6 +807,7 @@ async def migrate_status_async(ctx: typer.Context):
 
 @migrate_app.command("apply", help="Aplica migrações pendentes.")
 def migrate_apply_sync(
+    ctx: typer.Context,
     keyspace: Optional[str] = typer.Option(
         None,
         "--keyspace",
@@ -774,7 +817,7 @@ def migrate_apply_sync(
 ):
     """Aplica migrações pendentes."""
     ensure_migrations_dir()
-    asyncio.run(migrate_apply_async(keyspace))
+    asyncio.run(migrate_apply_async(ctx))
 
 
 async def migrate_apply_async(ctx: typer.Context):
@@ -906,6 +949,7 @@ async def migrate_apply_async(ctx: typer.Context):
     "downgrade", help="Reverte a última migração aplicada."
 )
 def migrate_downgrade_sync(
+    ctx: typer.Context,
     # Removido o argumento 'name' para simplificar o downgrade (sempre o último)
     keyspace: Optional[str] = typer.Option(
         None,
@@ -919,7 +963,7 @@ def migrate_downgrade_sync(
 ):
     """Reverte a última migração aplicada."""
     ensure_migrations_dir()
-    asyncio.run(migrate_downgrade_async(keyspace, force))
+    asyncio.run(migrate_downgrade_async(ctx, force))
 
 
 async def migrate_downgrade_async(ctx: typer.Context, force: bool):

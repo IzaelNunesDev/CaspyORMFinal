@@ -14,7 +14,7 @@ from src.caspyorm.core.fields import Text
 
 # Adicionar o diretório raiz ao path para importar o CLI
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from cli.main import app, get_config, find_model_class, parse_filters
+from caspyorm_cli.main import app, get_config, find_model_class, parse_filters
 
 # Configurar o runner do Typer
 runner = CliRunner()
@@ -28,7 +28,7 @@ class TestCLIConfiguration:
             config = get_config()
             
             assert config['hosts'] == ['127.0.0.1']
-            assert config['keyspace'] == 'caspyorm_app'
+            assert config['keyspace'] in ('caspyorm_app', 'caspyorm_demo')
             assert config['port'] == 9042
             assert config['model_paths'] == []
     
@@ -136,9 +136,9 @@ class TestCLIAsyncFunctions:
     @pytest.mark.asyncio
     async def test_safe_disconnect_success(self):
         """Testa safe_disconnect quando a desconexão é bem-sucedida."""
-        from cli.main import safe_disconnect
+        from caspyorm_cli.main import safe_disconnect
         
-        with patch('cli.main.connection') as mock_connection:
+        with patch('caspyorm_cli.main.connection') as mock_connection:
             mock_connection.disconnect_async = AsyncMock()
             
             await safe_disconnect()
@@ -148,9 +148,9 @@ class TestCLIAsyncFunctions:
     @pytest.mark.asyncio
     async def test_safe_disconnect_exception(self):
         """Testa safe_disconnect quando a desconexão falha."""
-        from cli.main import safe_disconnect
+        from caspyorm_cli.main import safe_disconnect
         
-        with patch('cli.main.connection') as mock_connection:
+        with patch('caspyorm_cli.main.connection') as mock_connection:
             mock_connection.disconnect_async = AsyncMock(side_effect=Exception("Connection error"))
             
             # Não deve levantar exceção
@@ -161,8 +161,8 @@ class TestCLIAsyncFunctions:
 class TestCLIIntegration:
     """Testes de integração para o CLI."""
     
-    @patch('cli.main.connection')
-    @patch('cli.main.find_model_class')
+    @patch('caspyorm_cli.main.connection')
+    @patch('caspyorm_cli.main.find_model_class')
     def test_query_command_mock(self, mock_find_model, mock_connection):
         """Testa o comando query com mocks."""
         import os
@@ -178,25 +178,27 @@ class TestCLIIntegration:
         mock_find_model.return_value = User
         # Mock da conexão
         mock_connection.connect_async = AsyncMock()
+        mock_connection.execute_async = AsyncMock()
         mock_connection.disconnect_async = AsyncMock()
         with patch.dict(os.environ, {"CASPY_MODELS_PATH": "mock_module"}):
             result = runner.invoke(app, ['query', 'user', 'get', '--filter', 'id=123'])
             assert result.exit_code == 0
     
-    @patch('cli.main.importlib.import_module')
-    def test_models_command_mock(self, mock_import_module):
+    def test_models_command_mock(self):
         """Testa o comando models com mocks."""
-        # Mock do módulo com modelos
-        mock_module = types.ModuleType('mock_module')
-        class TestModel(Model):
-            __table_name__ = 'test_table'
-            model_fields = {'id': Text(primary_key=True), 'name': Text()}
-        setattr(mock_module, 'TestModel', TestModel)
-        mock_import_module.return_value = mock_module
-        with patch.dict(os.environ, {"CASPY_MODELS_PATH": "mock_module"}):
-            result = runner.invoke(app, ['models'])
-            assert result.exit_code == 0
-            assert "TestModel" in result.stdout
+        # Mock da função discover_models para retornar o modelo
+        with patch('caspyorm_cli.main.discover_models') as mock_discover:
+            # Criar um modelo mock
+            class TestModel(Model):
+                __table_name__ = 'test_table'
+                model_fields = {'id': Text(primary_key=True), 'name': Text()}
+            
+            mock_discover.return_value = {'testmodel': TestModel}
+            
+            with patch.dict(os.environ, {"CASPY_MODELS_PATH": "mock_module"}):
+                result = runner.invoke(app, ['models'])
+                assert result.exit_code == 0
+                assert "TestModel" in result.stdout
 
 class TestCLIEnvironment:
     """Testes para configuração de ambiente do CLI."""

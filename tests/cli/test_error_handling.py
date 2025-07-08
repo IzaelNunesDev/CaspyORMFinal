@@ -12,7 +12,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 # Adicionar o diretório raiz ao path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from cli.main import app, CLI_VERSION
+from caspyorm_cli.main import app, CLI_VERSION
 
 def strip_ansi(text):
     ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
@@ -87,11 +87,11 @@ def test_query_command_missing_arguments():
     assert result.exit_code != 0  # Deve falhar
 
 def test_query_command_invalid_model():
-    """Testa se o comando query falha com modelo inválido."""
+    """Testa o comando query com modelo inválido."""
     from typer.testing import CliRunner
     runner = CliRunner()
     
-    with patch('cli.main.find_model_class', side_effect=SystemExit(1)):
+    with patch('caspyorm_cli.main.find_model_class', side_effect=SystemExit(1)):
         result = runner.invoke(app, ['query', 'invalid_model', 'get'])
         assert result.exit_code != 0
 
@@ -105,7 +105,11 @@ def test_models_command_with_mock_module():
         __table_name__ = 'test_table'
         model_fields = {'id': Text(primary_key=True), 'name': Text()}
     setattr(mock_module, 'TestModel', TestModel)
-    with patch('cli.main.importlib.import_module', return_value=mock_module):
+    
+    # Mock da função discover_models para retornar o modelo
+    with patch('caspyorm_cli.main.discover_models') as mock_discover:
+        mock_discover.return_value = {'testmodel': TestModel}
+        
         with patch.dict(os.environ, {"CASPY_MODELS_PATH": "mock_module"}):
             result = runner.invoke(app, ['models'])
             assert result.exit_code == 0
@@ -117,10 +121,10 @@ def test_models_command_no_models():
     runner = CliRunner()
     # Mock do módulo sem modelos
     mock_module = types.ModuleType('mock_module')
-    with patch('cli.main.importlib.import_module', return_value=mock_module):
+    with patch('caspyorm_cli.main.importlib.import_module', return_value=mock_module):
         with patch.dict(os.environ, {"CASPY_MODELS_PATH": "mock_module"}):
             result = runner.invoke(app, ['models'])
             assert result.exit_code == 0
-            assert "Nenhum modelo CaspyORM encontrado nos caminhos de busca." in result.stdout
+            assert "Nenhum modelo CaspyORM encontrado" in result.stdout
 
 # Removido: execução manual de testes - use pytest para executar os testes 

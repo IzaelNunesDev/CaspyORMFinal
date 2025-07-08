@@ -188,7 +188,8 @@ class ConnectionManager:
             # Usar o keyspace
             self.session.set_keyspace(keyspace)
             self.keyspace = keyspace
-            
+            # Sincronizar UDTs automaticamente (igual ao async)
+            self.sync_udts()
             logger.info(f"Usando keyspace (SÍNCRONO): {keyspace}")
             
         except Exception as e:
@@ -210,6 +211,9 @@ class ConnectionManager:
             # Usar o keyspace
             self.async_session.set_keyspace(keyspace)
             self.keyspace = keyspace
+            
+            # Sincronizar UDTs automaticamente
+            await self.sync_udts_async()
             
             logger.info(f"Usando keyspace (ASSÍNCRONO): {keyspace}")
             
@@ -240,17 +244,29 @@ class ConnectionManager:
             raise RuntimeError("Não há conexão assíncrona ativa com o Cassandra")
         try:
             future = self.async_session.execute_async(query, parameters) if parameters is not None else self.async_session.execute_async(query)
-            # Tenta usar asyncio.wrap_future se possível
-            try:
-                import concurrent.futures
-                return await asyncio.wrap_future(future)
-            except Exception:
-                # Fallback para to_thread
-                return await asyncio.to_thread(future.result)
+            return await asyncio.wrap_future(future)
         except Exception as e:
             logger.error(f"Erro ao executar query (async): {e}")
             logger.error(f"Query: {query}")
             logger.error(f"Parâmetros: {parameters}")
+            raise
+
+    async def prepare_async(self, cql_query: str) -> PreparedStatement:
+        """Prepara uma query CQL (assíncrono) com cache."""
+        if not self.async_session:
+            raise RuntimeError("Não há conexão assíncrona ativa com o Cassandra")
+        
+        if cql_query in self._prepared_statement_cache:
+            return self._prepared_statement_cache[cql_query]
+
+        try:
+            future = self.async_session.prepare_async(cql_query)
+            prepared = await asyncio.wrap_future(future)
+            self._prepared_statement_cache[cql_query] = prepared
+            return prepared
+        except Exception as e:
+            logger.error(f"Erro ao preparar query (async): {e}")
+            logger.error(f"Query: {cql_query}")
             raise
     
     def disconnect(self) -> None:
@@ -270,17 +286,21 @@ class ConnectionManager:
 
     async def disconnect_async(self) -> None:
         """Desconecta do cluster Cassandra (assíncrono)."""
-        if self.session:
-            self.session.shutdown()
-            self.session = None
-        if self.cluster:
-            self.cluster.shutdown()
-            self.cluster = None
-        self.async_session = None
-        self._is_connected = False
-        self._is_async_connected = False
-        
-        logger.info("Desconectado do Cassandra (ASSÍNCRONO)")
+        try:
+            if self.session:
+                self.session.shutdown()
+                self.session = None
+            if self.cluster:
+                self.cluster.shutdown()
+                self.cluster = None
+            self.async_session = None
+            self._is_connected = False
+            self._is_async_connected = False
+            
+            logger.info("Desconectado do Cassandra (ASSÍNCRONO)")
+        except Exception as e:
+            logger.error(f"Erro ao desconectar (async): {e}")
+            raise
     
     @property
     def is_connected(self) -> bool:
@@ -353,6 +373,10 @@ async def disconnect_async():
 async def execute_async(query: str, parameters: Optional[Any] = None):
     """Executa uma query usando a instância global (assíncrono)."""
     return await connection.execute_async(query, parameters)
+
+async def prepare_async(cql_query: str) -> PreparedStatement:
+    """Prepara uma query usando a instância global (assíncrono)."""
+    return await connection.prepare_async(cql_query)
 
 def get_async_session():
     """

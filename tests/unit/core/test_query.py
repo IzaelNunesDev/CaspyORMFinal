@@ -306,13 +306,14 @@ class TestQuerySet:
         instances = qs.bulk_create([])
         assert instances == []
 
-    def test_bulk_create_missing_pk(self):
-        qs = QuerySet(DummyModel)
-        instances = [
-            DummyModel(name="User1", age=20), # Missing ID
-        ]
-        with pytest.raises(ValueError, match="Primary key 'id' não pode ser nula em bulk_create."):
-            qs.bulk_create(instances)
+    def test_bulk_create_missing_pk(self, mock_connection):
+        with patch('src.caspyorm.core.connection.get_session', return_value=mock_connection["session"]):
+            qs = QuerySet(DummyModel)
+            instances = [
+                DummyModel(name="User1", age=20), # Missing ID
+            ]
+            with pytest.raises(ValueError, match="Primary key 'id' não pode ser nula em bulk_create."):
+                qs.bulk_create(instances)
 
 
 class TestModuleFunctions:

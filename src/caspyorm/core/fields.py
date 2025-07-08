@@ -405,7 +405,7 @@ class UserDefinedType(BaseField):
     python_type = object  # Será substituído pelo tipo específico
 
     def __init__(self, udt_class: Type, **kwargs):
-        from .usertype import UserType
+        from ..types.usertype import UserType
         if not isinstance(udt_class, type) or not issubclass(udt_class, UserType):
             raise TypeError("UserDefinedType deve receber uma classe que herda de UserType.")
         
