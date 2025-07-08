@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Any
 
-from caspyorm.fields import Text, Integer, UUID, Boolean, Timestamp, List as ListField, Set, Map
+from src.caspyorm.core.fields import Text, Integer, UUID, Boolean, Timestamp, List as ListField, Set, Map
 
 
 # Fixtures para campos
@@ -244,7 +244,7 @@ def query_test_data():
 @pytest.fixture
 def mock_connection():
     """Retorna um mock da conexão."""
-    with patch('caspyorm.connection.Connection') as mock_conn:
+    with patch('src.caspyorm.core.connection.Connection') as mock_conn:
         yield mock_conn
 
 
