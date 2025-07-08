@@ -38,6 +38,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Dependências opcionais para recursos assíncronos otimizados
+async = ["aiocassandra"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

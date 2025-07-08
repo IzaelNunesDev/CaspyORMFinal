@@ -7,6 +7,17 @@ from cassandra.query import PreparedStatement, BoundStatement
 from typing import List, Optional, Dict, Any, Type
 import logging
 from ..utils.exceptions import ConnectionError, TimeoutError, QueryError, LWTError
+from cassandra.io.asyncioreactor import AsyncioConnection
+# Adiciona suporte ao aiocassandra para integração nativa com asyncio
+try:
+    import aiocassandra
+    _AIO_CASSANDRA_AVAILABLE = True
+    def _patch_aiocassandra(session):
+        aiocassandra.aiosession(session)
+except ImportError:
+    _AIO_CASSANDRA_AVAILABLE = False
+    def _patch_aiocassandra(session):
+        pass
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -150,7 +161,7 @@ class ConnectionManager:
         **kwargs: Any
     ) -> None:
         """
-        Conecta ao cluster Cassandra (assíncrono).
+        Conecta ao cluster Cassandra (assíncrono), usando o reactor nativo do asyncio.
         """
         try:
             auth_provider = None
@@ -160,16 +171,19 @@ class ConnectionManager:
                 contact_points=contact_points,
                 port=port,
                 auth_provider=auth_provider,
+                connection_class=AsyncioConnection,  # Usa o reactor do asyncio
                 **kwargs
             )
-            # Executa a chamada bloqueante em uma thread separada
-            self.session = await asyncio.to_thread(self.cluster.connect)
+            # Conexão não bloqueante, já integrada ao event loop
+            self.session = self.cluster.connect()
             self.async_session = self.session  # Compatibilidade
+            # Se aiocassandra estiver disponível, faz o patch da sessão
+            _patch_aiocassandra(self.async_session)
             self._is_connected = True
             self._is_async_connected = True
             if keyspace:
                 await self.use_keyspace_async(keyspace)
-            logger.info(f"Conectado ao Cassandra (ASSÍNCRONO) em {contact_points}:{port}")
+            logger.info(f"Conectado ao Cassandra (ASSÍNCRONO) em {contact_points}:{port} [asyncio reactor]")
         except Exception as e:
             logger.error(f"Erro ao conectar ao Cassandra (async): {e}")
             raise ConnectionError(str(e))
@@ -240,12 +254,19 @@ class ConnectionManager:
             raise QueryError(str(e))
 
     async def execute_async(self, query: str, parameters: Optional[Any] = None):
-        """Executa uma query CQL (assíncrono)."""
+        """Executa uma query CQL (assíncrono), usando integração nativa com asyncio."""
         if not self.async_session:
             raise RuntimeError("Não há conexão assíncrona ativa com o Cassandra")
         try:
-            future = self.async_session.execute_async(query, parameters) if parameters is not None else self.async_session.execute_async(query)
-            return await asyncio.wrap_future(future)
+            # Usa o método nativo do aiocassandra se disponível e for coroutine
+            execute_future = getattr(self.async_session, "execute_future", None)
+            if _AIO_CASSANDRA_AVAILABLE and asyncio.iscoroutinefunction(execute_future):
+                return await execute_future(query, parameters)
+            else:
+                # Fallback: executa usando o ResponseFuture do driver
+                future = self.async_session.execute_async(query, parameters) if parameters is not None else self.async_session.execute_async(query)
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, future.result)
         except Exception as e:
             logger.error(f"Erro ao executar query (async): {e}")
             logger.error(f"Query: {query}")
@@ -253,16 +274,21 @@ class ConnectionManager:
             raise QueryError(str(e))
 
     async def prepare_async(self, cql_query: str) -> PreparedStatement:
-        """Prepara uma query CQL (assíncrono) com cache."""
+        """Prepara uma query CQL (assíncrono) com cache, usando integração nativa com asyncio."""
         if not self.async_session:
             raise RuntimeError("Não há conexão assíncrona ativa com o Cassandra")
-        
         if cql_query in self._prepared_statement_cache:
             return self._prepared_statement_cache[cql_query]
-
         try:
-            # Executa a chamada bloqueante em uma thread separada
-            prepared = await asyncio.to_thread(self.async_session.prepare, cql_query)
+            prepare_future = getattr(self.async_session, "prepare_future", None)
+            if _AIO_CASSANDRA_AVAILABLE and asyncio.iscoroutinefunction(prepare_future):
+                prepared = await prepare_future(cql_query)
+            else:
+                # Fallback: executa usando thread pool
+                prepared = await asyncio.get_event_loop().run_in_executor(None, self.async_session.prepare, cql_query)
+            # Checagem de tipo: garantir que é um PreparedStatement
+            if not isinstance(prepared, PreparedStatement):
+                raise TypeError(f"prepare_async: retorno inesperado, esperado PreparedStatement, obtido {type(prepared)}")
             self._prepared_statement_cache[cql_query] = prepared
             return prepared
         except Exception as e:
@@ -286,19 +312,17 @@ class ConnectionManager:
         logger.info("Desconectado do Cassandra (SÍNCRONO)")
 
     async def disconnect_async(self) -> None:
-        """Desconecta do cluster Cassandra (assíncrono)."""
+        """Desconecta do cluster Cassandra (assíncrono), sem uso de thread pool."""
         try:
             if self.session:
                 self.session.shutdown()
                 self.session = None
             if self.cluster:
-                # Executa a chamada bloqueante em uma thread separada
-                await asyncio.to_thread(self.cluster.shutdown)
+                self.cluster.shutdown()
                 self.cluster = None
             self.async_session = None
             self._is_connected = False
             self._is_async_connected = False
-            
             logger.info("Desconectado do Cassandra (ASSÍNCRONO)")
         except Exception as e:
             logger.error(f"Erro ao desconectar (async): {e}")

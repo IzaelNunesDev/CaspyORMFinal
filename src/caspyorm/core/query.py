@@ -274,19 +274,25 @@ class QuerySet:
         """
         Deleta todos os registros que correspondem aos filtros (síncrono).
         IMPORTANTE: No Cassandra, você DEVE especificar a chave de partição completa.
+        Agora valida se os filtros das chaves de partição são de igualdade ou IN.
         """
         if not self._filters:
             raise ValueError("A deleção em massa sem filtros não é permitida por segurança.")
-        
-        # VALIDAÇÃO ADICIONADA: Garante que todas as chaves de partição estão presentes
+        # Validação aprimorada: garantir igualdade ou IN nas chaves de partição
         partition_keys = set(self.model_cls.__caspy_schema__.get('partition_keys', []))
-        filter_keys = set(f.split('__')[0] for f in self._filters.keys())  # Considera operadores como __gt
-
-        if not partition_keys.issubset(filter_keys):
-            raise ValueError(
-                f"Para deletar, você deve filtrar por todas as chaves de partição. "
-                f"Chaves necessárias: {list(partition_keys)}. Filtros fornecidos: {list(filter_keys)}"
-            )
+        for pk in partition_keys:
+            found = False
+            for f in self._filters:
+                field, *op = f.split('__', 1)
+                if field == pk:
+                    if not op or op[0] in ('exact', 'in'):
+                        found = True
+                        if op and op[0] == 'in' and not isinstance(self._filters[f], (list, tuple)):
+                            raise ValueError(f"O filtro '{f}' deve ser uma lista/tupla para operador IN.")
+                    else:
+                        raise ValueError(f"Operador '{op[0]}' não suportado para chave de partição '{pk}' em delete. Use apenas igualdade (=) ou IN.")
+            if not found:
+                raise ValueError(f"Para deletar, você deve filtrar por todas as chaves de partição usando igualdade (=) ou IN. Faltou: {pk}")
         
         cql, params = query_builder.build_delete_cql(
             self.model_cls.__caspy_schema__,
@@ -312,19 +318,25 @@ class QuerySet:
         """
         Deleta todos os registros que correspondem aos filtros (assíncrono).
         IMPORTANTE: No Cassandra, você DEVE especificar a chave de partição completa.
+        Agora valida se os filtros das chaves de partição são de igualdade ou IN.
         """
         if not self._filters:
             raise ValueError("A deleção em massa sem filtros não é permitida por segurança.")
-        
-        # VALIDAÇÃO ADICIONADA: Garante que todas as chaves de partição estão presentes
+        # Validação aprimorada: garantir igualdade ou IN nas chaves de partição
         partition_keys = set(self.model_cls.__caspy_schema__.get('partition_keys', []))
-        filter_keys = set(f.split('__')[0] for f in self._filters.keys())  # Considera operadores como __gt
-
-        if not partition_keys.issubset(filter_keys):
-            raise ValueError(
-                f"Para deletar, você deve filtrar por todas as chaves de partição. "
-                f"Chaves necessárias: {list(partition_keys)}. Filtros fornecidos: {list(filter_keys)}"
-            )
+        for pk in partition_keys:
+            found = False
+            for f in self._filters:
+                field, *op = f.split('__', 1)
+                if field == pk:
+                    if not op or op[0] in ('exact', 'in'):
+                        found = True
+                        if op and op[0] == 'in' and not isinstance(self._filters[f], (list, tuple)):
+                            raise ValueError(f"O filtro '{f}' deve ser uma lista/tupla para operador IN.")
+                    else:
+                        raise ValueError(f"Operador '{op[0]}' não suportado para chave de partição '{pk}' em delete. Use apenas igualdade (=) ou IN.")
+            if not found:
+                raise ValueError(f"Para deletar, você deve filtrar por todas as chaves de partição usando igualdade (=) ou IN. Faltou: {pk}")
         
         cql, params = query_builder.build_delete_cql(
             self.model_cls.__caspy_schema__,
@@ -364,10 +376,8 @@ class QuerySet:
         prepared = session.prepare(cql)
         try:
             bound = prepared.bind(params)
-            if paging_state:
-                bound.paging_state = paging_state
-            
-            result_set = session.execute(bound)
+            # paging_state NÃO é atributo do BoundStatement, deve ser passado ao executar
+            result_set = session.execute(bound, paging_state=paging_state)
             results = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
             
             return {
@@ -397,10 +407,8 @@ class QuerySet:
         prepared = await connection.prepare_async(cql)
         try:
             bound = prepared.bind(params)
-            if paging_state:
-                bound.paging_state = paging_state
-            
-            result_set = await asyncio.wrap_future(session.execute_async(bound))
+            # paging_state NÃO é atributo do BoundStatement, deve ser passado ao executar
+            result_set = await asyncio.wrap_future(session.execute_async(bound, paging_state=paging_state))
             results = [_map_row_to_instance(self.model_cls, row._asdict()) for row in result_set]
             
             return {
@@ -436,7 +444,7 @@ class QuerySet:
 
 # --- Funções de Conveniência ---
 
-def save_instance(instance, ttl: int = None) -> None:
+def save_instance(instance, ttl: Optional[int] = None) -> None:
     """
     Salva uma instância de modelo no banco de dados (síncrono).
     Usa INSERT com IF NOT EXISTS para evitar duplicatas.
@@ -460,7 +468,7 @@ def save_instance(instance, ttl: int = None) -> None:
             logger.error(f"Erro ao salvar instância (SÍNCRONO): {cql} com parâmetros: {params}. Erro: {e}")
             raise QueryError(str(e))
 
-async def save_instance_async(instance, ttl: int = None) -> None:
+async def save_instance_async(instance, ttl: Optional[int] = None) -> None:
     """
     Salva uma instância de modelo no banco de dados (assíncrono).
     Usa INSERT com IF NOT EXISTS para evitar duplicatas.

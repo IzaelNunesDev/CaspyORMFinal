@@ -8,6 +8,7 @@ import os
 import sys
 from typing import List, Optional
 import functools
+import atexit
 
 # Use tomllib for Python 3.11+ TOML parsing
 try:
@@ -340,9 +341,10 @@ async def run_query(
                 f"Conectando ao Cassandra (keyspace: {target_keyspace})...", total=None
             )
 
-            await connection.connect_async(
-                contact_points=config["hosts"], keyspace=target_keyspace
-            )
+            # A conexão global já está gerenciada pelo Typer context
+            # await connection.connect_async(
+            #     contact_points=config["hosts"], keyspace=target_keyspace
+            # )
             progress.update(task, description="Conectado! Buscando modelo...")
 
             ModelClass = find_model_class(model_name)
@@ -437,7 +439,9 @@ async def run_query(
         # Ensure 'from e' is used correctly if re-raising
         raise typer.Exit(1)
     finally:
-        await safe_disconnect()
+        # A conexão global já está gerenciada pelo Typer context
+        # await safe_disconnect()
+        pass
 
 
 @app.command(
@@ -645,9 +649,10 @@ async def migrate_init_async(ctx: typer.Context):
             task = progress.add_task(
                 f"Conectando ao Cassandra (keyspace: {target_keyspace})...", total=None
             )
-            await connection.connect_async(
-                contact_points=config["hosts"], keyspace=target_keyspace
-            )
+            # A conexão global já está gerenciada pelo Typer context
+            # await connection.connect_async(
+            #     contact_points=config["hosts"], keyspace=target_keyspace
+            # )
             progress.update(
                 task, description="Conectado! Verificando tabela de migrações..."
             )
@@ -667,7 +672,9 @@ async def migrate_init_async(ctx: typer.Context):
         # Use 'from e' correctly when raising typer.Exit
         raise typer.Exit(1)
     finally:
-        await safe_disconnect()
+        # A conexão global já está gerenciada pelo Typer context
+        # await safe_disconnect()
+        pass
 
 
 @migrate_app.command("new", help="Cria um novo arquivo de migração.")
@@ -732,9 +739,10 @@ async def migrate_status_async(ctx: typer.Context):
             task = progress.add_task(
                 f"Conectando ao Cassandra (keyspace: {target_keyspace})...", total=None
             )
-            await connection.connect_async(
-                contact_points=config["hosts"], keyspace=target_keyspace
-            )
+            # A conexão global já está gerenciada pelo Typer context
+            # await connection.connect_async(
+            #     contact_points=config["hosts"], keyspace=target_keyspace
+            # )
             progress.update(
                 task, description="Conectado! Buscando migrações aplicadas..."
             )
@@ -742,7 +750,8 @@ async def migrate_status_async(ctx: typer.Context):
             # FIX: Busca as versões (nomes dos arquivos) aplicadas
             try:
                 applied_migrations_raw = await Migration.filter().all_async()
-                applied_versions = {m.version for m in applied_migrations_raw}
+                # Corrige: usa 'file_name' ou campo equivalente, não 'version' se não existir
+                applied_versions = {getattr(m, 'version', getattr(m, 'file_name', None)) for m in applied_migrations_raw if hasattr(m, 'version') or hasattr(m, 'file_name')}
             except Exception as e:
                 if "does not exist" in str(e):
                      console.print("[bold yellow]Tabela de migrações não encontrada. Execute 'caspy migrate init' primeiro.[/bold yellow]")
@@ -769,7 +778,8 @@ async def migrate_status_async(ctx: typer.Context):
 
             # Adiciona migrações aplicadas que podem não ter um arquivo correspondente (ex: arquivo deletado)
             applied_but_missing = applied_versions - set(migration_files)
-            for applied_version in sorted(list(applied_but_missing)):
+            # Corrige: filtra None antes de ordenar e ignora valores não comparáveis
+            for applied_version in sorted([v for v in applied_but_missing if isinstance(v, str)]):
                  table.add_row(
                     applied_version,
                     "[bold green]APLICADA[/bold green] [red](Arquivo Ausente)[/red]",
@@ -795,7 +805,9 @@ async def migrate_status_async(ctx: typer.Context):
         )
         raise typer.Exit(1)
     finally:
-        await safe_disconnect()
+        # A conexão global já está gerenciada pelo Typer context
+        # await safe_disconnect()
+        pass
 
 
 @migrate_app.command("apply", help="Aplica migrações pendentes.")
@@ -831,9 +843,10 @@ async def migrate_apply_async(ctx: typer.Context):
             task = progress.add_task(
                 f"Conectando ao Cassandra (keyspace: {target_keyspace})...", total=None
             )
-            await connection.connect_async(
-                contact_points=config["hosts"], keyspace=target_keyspace
-            )
+            # A conexão global já está gerenciada pelo Typer context
+            # await connection.connect_async(
+            #     contact_points=config["hosts"], keyspace=target_keyspace
+            # )
             progress.update(
                 task, description="Conectado! Buscando migrações aplicadas..."
             )
@@ -841,7 +854,7 @@ async def migrate_apply_async(ctx: typer.Context):
             # FIX: Busca as versões (nomes dos arquivos) aplicadas
             try:
                 applied_migrations_raw = await Migration.filter().all_async()
-                applied_versions = {m.version for m in applied_migrations_raw}
+                applied_versions = {getattr(m, 'version', getattr(m, 'file_name', None)) for m in applied_migrations_raw if hasattr(m, 'version') or hasattr(m, 'file_name')}
             except Exception as e:
                 if "does not exist" in str(e):
                      console.print("[bold yellow]Tabela de migrações não encontrada. Execute 'caspy migrate init' primeiro.[/bold yellow]")
@@ -901,9 +914,20 @@ async def migrate_apply_async(ctx: typer.Context):
                         await module.upgrade()
                         
                         # FIX: Registra a migração usando o nome do arquivo como versão
-                        await Migration(
-                            version=file_name, applied_at=datetime.now()
-                        ).save_async()
+                        # Corrige: usa 'version' se existir, senão 'file_name'
+                        mig_kwargs = {"applied_at": datetime.now()}
+                        if hasattr(Migration, "version"):
+                            mig_kwargs["version"] = file_name
+                        else:
+                            mig_kwargs["file_name"] = file_name
+                        # Garante que save_async é awaitable
+                        instance = Migration(**mig_kwargs)
+                        save_fn = getattr(instance, "save_async", None)
+                        if save_fn and callable(save_fn):
+                            result = save_fn()
+                            # Só faz await se for coroutine
+                            if asyncio.iscoroutine(result):
+                                await result
                         console.print(
                             f"[bold green]✅ Migração '{file_name}' aplicada com sucesso.[/bold green]"
                         )
@@ -935,7 +959,9 @@ async def migrate_apply_async(ctx: typer.Context):
         # Remover o diretório de migrações do sys.path
         if migrations_abs_path in sys.path:
             sys.path.remove(migrations_abs_path)
-        await safe_disconnect()
+        # A conexão global já está gerenciada pelo Typer context
+        # await safe_disconnect()
+        pass
 
 
 @migrate_app.command(
@@ -962,8 +988,8 @@ def migrate_downgrade_sync(
 async def migrate_downgrade_async(ctx: typer.Context, force: bool):
     config = ctx.obj["config"]
     target_keyspace = config["keyspace"]
-    config = ctx.obj["config"]
-    target_keyspace = config["keyspace"]
+    # config = ctx.obj["config"] # This line is duplicated, remove it.
+    # target_keyspace = config["keyspace"] # This line is duplicated, remove it.
 
     # Adicionar o diretório de migrações ao sys.path temporariamente
     migrations_abs_path = os.path.abspath(MIGRATIONS_DIR)
@@ -977,9 +1003,10 @@ async def migrate_downgrade_async(ctx: typer.Context, force: bool):
             console=console,
         ) as progress:
             # ... (Conexão similar ao apply) ...
-            await connection.connect_async(
-                contact_points=config["hosts"], keyspace=target_keyspace
-            )
+            # A conexão global já está gerenciada pelo Typer context
+            # await connection.connect_async(
+            #     contact_points=config["hosts"], keyspace=target_keyspace
+            # )
 
             # 1. Encontrar a última migração aplicada (baseado na ordem do arquivo)
             applied_migrations_raw = await Migration.filter().all_async()
@@ -1043,7 +1070,9 @@ async def migrate_downgrade_async(ctx: typer.Context, force: bool):
         # Remover o diretório de migrações do sys.path
         if migrations_abs_path in sys.path:
             sys.path.remove(migrations_abs_path)
-        await safe_disconnect()
+        # A conexão global já está gerenciada pelo Typer context
+        # await safe_disconnect()
+        pass
 
 
 @app.command("version", help="Mostra a versão do CaspyORM CLI.")
@@ -1092,9 +1121,10 @@ async def run_sql_query(query: str, allow_filtering: bool, ctx: typer.Context):
                 f"Conectando ao Cassandra (keyspace: {target_keyspace})...", total=None
             )
 
-            await connection.connect_async(
-                contact_points=config["hosts"], keyspace=target_keyspace
-            )
+            # A conexão global já está gerenciada pelo Typer context
+            # await connection.connect_async(
+            #     contact_points=config["hosts"], keyspace=target_keyspace
+            # )
             progress.update(task, description="Conectado! Executando query...")
 
             # Adicionar ALLOW FILTERING se a flag for True e for uma query SELECT
@@ -1137,7 +1167,9 @@ async def run_sql_query(query: str, allow_filtering: bool, ctx: typer.Context):
         console.print(f"[bold red]❌ Erro ao executar query:[/bold red] {e}")
         raise typer.Exit(1) from e
     finally:
-        await safe_disconnect()
+        # A conexão global já está gerenciada pelo Typer context
+        # await safe_disconnect()
+        pass
 
 
 @app.command(help="Inicia um shell interativo Python/IPython com os modelos CaspyORM pré-carregados.")
@@ -1176,6 +1208,18 @@ Digite exit() ou Ctrl-D para sair.
         code.interact(banner=banner, local=context)
 
 
+# --- Gerenciamento global de conexão ---
+async def _global_connect(ctx: typer.Context):
+    config = ctx.obj["config"]
+    await connection.connect_async(contact_points=config["hosts"], keyspace=config["keyspace"])
+    ctx.obj["connected"] = True
+
+async def _global_disconnect(ctx: typer.Context):
+    if ctx.obj.get("connected"):
+        await connection.disconnect_async()
+        ctx.obj["connected"] = False
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -1202,7 +1246,6 @@ def main(
     ),
 ):
     """CaspyORM CLI - Ferramenta de linha de comando para interagir com modelos CaspyORM."""
-    # Armazena as opções globais no contexto para que os subcomandos possam acessá-las
     ctx.ensure_object(dict)
     config = get_config() # Carrega a configuração base (de toml e env)
 
@@ -1215,6 +1258,20 @@ def main(
         config["port"] = port
 
     ctx.obj["config"] = config
+    ctx.obj["connected"] = False
+    # Conecta globalmente ao Cassandra (apenas uma vez por execução CLI)
+    try:
+        asyncio.get_event_loop().run_until_complete(_global_connect(ctx))
+    except Exception as e:
+        console.print(f"[bold red]Erro ao conectar globalmente ao Cassandra:[/bold red] {e}")
+        raise typer.Exit(1)
+    # Garante desconexão ao sair
+    def _disconnect_on_exit():
+        try:
+            asyncio.get_event_loop().run_until_complete(_global_disconnect(ctx))
+        except Exception:
+            pass
+    atexit.register(_disconnect_on_exit)
 
 if __name__ == "__main__":
     app()

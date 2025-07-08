@@ -157,40 +157,39 @@ def build_create_index_cql(table_name: str, field_name: str) -> str:
     return f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({field_name});"
 
 def get_existing_indexes(session: Session, keyspace: str, table_name: str) -> set:
-    """Obtém os índices existentes para uma tabela."""
+    """Obtém os índices existentes para uma tabela usando o metadata do driver."""
     try:
-        query = f"""
-            SELECT index_name FROM system_schema.indexes
-            WHERE keyspace_name = '{keyspace}'
-            AND table_name = '{table_name}'
-        """
-        result = session.execute(query)
-        return {row.index_name for row in result}
+        if not session.cluster:
+            logger.error("Cluster não está disponível na sessão")
+            return set()
+        cluster_meta = session.cluster.metadata
+        try:
+            keyspace_meta = cluster_meta.keyspaces[keyspace]
+            table_meta = keyspace_meta.tables[table_name]
+        except KeyError:
+            return set()
+        # Usa o metadata do driver para obter os nomes dos índices
+        return set(table_meta.indexes.keys())
     except Exception as e:
         logger.warning(f"Erro ao obter índices existentes: {e}")
         return set()
 
 def create_indexes_for_table(session: Session, table_name: str, model_schema: Dict[str, Any], verbose: bool = True) -> None:
-    """Cria os índices necessários para uma tabela."""
+    """Cria os índices necessários para uma tabela usando o metadata do driver."""
     if not model_schema.get('indexes'):
         return
-    
     keyspace = session.keyspace
     if not keyspace:
         logger.error("Keyspace não está definido na sessão")
         return
     existing_indexes = get_existing_indexes(session, keyspace, table_name)
-    
     logger.info(f"Criando índices para a tabela '{table_name}'...")
-    
     for field_name in model_schema['indexes']:
         index_name = f"{table_name}_{field_name}_idx"
-        
         if index_name in existing_indexes:
             if verbose:
                 logger.info(f"  [✓] Índice '{index_name}' já existe")
             continue
-        
         create_index_query = build_create_index_cql(table_name, field_name)
         try:
             if verbose:
@@ -199,84 +198,76 @@ def create_indexes_for_table(session: Session, table_name: str, model_schema: Di
             logger.info(f"  [✓] Índice '{index_name}' criado com sucesso")
         except Exception as e:
             logger.error(f"  [!] ERRO ao criar índice '{index_name}': {e}")
-            # Não falhar completamente se um índice falhar
             continue
-    
     logger.info("Criação de índices concluída.")
 
 async def sync_table_async(model_cls: Type["Model"], auto_apply: bool = False, verbose: bool = True) -> None:
     """
     Sincroniza o schema do modelo com a tabela no Cassandra (versão assíncrona).
-    
-    Args:
-        model_cls: Classe do modelo a ser sincronizada
-        auto_apply: Se True, aplica as mudanças automaticamente
-        verbose: Se True, exibe informações detalhadas
+    Agora consulta o schema real da tabela usando o metadata do driver.
     """
     session = connection.get_async_session()
     if not session:
         raise RuntimeError("Não há conexão assíncrona ativa com o Cassandra")
-    
     # Obter informações do modelo
     table_name = model_cls.__table_name__
     model_schema = model_cls.__caspy_schema__
-    
     # Obter schema atual da tabela
     keyspace = session.keyspace
     if not keyspace:
         raise RuntimeError("Keyspace não está definido na sessão")
-    
-    # Para versão assíncrona, vamos usar a sessão assíncrona
-    # e fazer as operações de forma assíncrona
-    db_schema = None  # Por enquanto, assumir que a tabela não existe
-    
+    # Consulta o schema da tabela usando o metadata do driver (igual à versão síncrona)
+    db_schema = get_cassandra_table_schema(session, keyspace, table_name)
     if db_schema is None:
         # Tabela não existe, criar
         logger.info(f"Tabela '{table_name}' não encontrada. Criando...")
         create_table_query = build_create_table_cql(table_name, model_schema)
-        
         if verbose:
             logger.info(f"Executando CQL para criar tabela:\n{create_table_query}")
-        
         try:
             future = session.execute_async(create_table_query)
             await asyncio.to_thread(future.result)
             logger.info("Tabela criada com sucesso.")
-            
             # Criar índices após criar a tabela
             await create_indexes_for_table_async(session, table_name, model_schema, verbose)
-            
         except Exception as e:
             logger.error(f"Erro ao criar tabela: {e}")
             raise
         return
-    
-    # Para outras operações, usar a versão síncrona por enquanto
+    # Se a tabela já existe, usar a lógica síncrona de comparação/aplicação de mudanças
     sync_table(model_cls, auto_apply, verbose)
 
 async def create_indexes_for_table_async(session, table_name: str, model_schema: Dict[str, Any], verbose: bool = True) -> None:
-    """Cria os índices necessários para uma tabela (versão assíncrona)."""
+    """Cria os índices necessários para uma tabela (versão assíncrona, usando metadata do driver)."""
     if not model_schema.get('indexes'):
         return
-    
     keyspace = session.keyspace
     if not keyspace:
         logger.error("Keyspace não está definido na sessão")
         return
-    
-    # Por enquanto, assumir que não há índices existentes
-    existing_indexes = set()
-    
+    # Usa o metadata do driver para obter os índices existentes
+    try:
+        if not session.cluster:
+            logger.error("Cluster não está disponível na sessão")
+            existing_indexes = set()
+        else:
+            cluster_meta = session.cluster.metadata
+            try:
+                keyspace_meta = cluster_meta.keyspaces[keyspace]
+                table_meta = keyspace_meta.tables[table_name]
+                existing_indexes = set(table_meta.indexes.keys())
+            except KeyError:
+                existing_indexes = set()
+    except Exception as e:
+        logger.warning(f"Erro ao obter índices existentes: {e}")
+        existing_indexes = set()
     logger.info(f"Criando índices para a tabela '{table_name}'...")
-    
     for field_name in model_schema['indexes']:
         index_name = f"{table_name}_{field_name}_idx"
-        
         if index_name in existing_indexes:
             if verbose:
                 logger.info(f"  [✓] Índice '{index_name}' já existe")
             continue
-        
         create_index_query = build_create_index_cql(table_name, field_name)
         try:
             if verbose:
@@ -287,7 +278,6 @@ async def create_indexes_for_table_async(session, table_name: str, model_schema:
         except Exception as e:
             logger.error(f"  [!] ERRO ao criar índice '{index_name}': {e}")
             continue
-    
     logger.info("Criação de índices concluída.")
 
 def sync_table(model_cls: Type["Model"], auto_apply: bool = False, verbose: bool = True) -> None:
