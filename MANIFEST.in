@@ -1,0 +1,25 @@
+include README.md
+include LICENSE
+include pyproject.toml
+recursive-include src *.py
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+exclude tests/
+exclude scripts/
+exclude docs/
+exclude examples/
+exclude venv/
+exclude .git/
+exclude .pytest_cache/
+exclude *.egg-info/
+exclude .coverage
+exclude htmlcov/
+exclude .mypy_cache/
+exclude .ruff_cache/
+exclude .pypirc
+exclude coverage.xml
+exclude dist/
+exclude .gitignore
+exclude docker-compose.yml
+exclude config/
+exclude migrations/ 

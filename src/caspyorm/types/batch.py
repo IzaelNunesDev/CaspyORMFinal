@@ -1,14 +1,20 @@
-from cassandra.query import BatchStatement
-from ..core.connection import get_session
-from ..core.connection import get_async_session
+import asyncio
 from contextvars import ContextVar, Token
 from typing import Optional
-import asyncio
+
+from cassandra.query import BatchStatement
+
+from ..core.connection import get_async_session, get_session
 
 # ContextVar para batch ativo (correção para asyncio)
-_active_batch_context: ContextVar[Optional["BatchQuery"]] = ContextVar("active_batch", default=None)
+_active_batch_context: ContextVar[Optional["BatchQuery"]] = ContextVar(
+    "active_batch", default=None
+)
 # ContextVar para batch assíncrono
-_active_async_batch_context: ContextVar[Optional["AsyncBatchQuery"]] = ContextVar("active_async_batch", default=None)
+_active_async_batch_context: ContextVar[Optional["AsyncBatchQuery"]] = ContextVar(
+    "active_async_batch", default=None
+)
+
 
 class BatchQuery:
     """
@@ -17,6 +23,7 @@ class BatchQuery:
         with BatchQuery() as batch:
             ... # Model.save() etc
     """
+
     def __init__(self):
         self.statements = []  # Lista de (query, params)
         self.token: Optional[Token] = None
@@ -34,11 +41,17 @@ class BatchQuery:
                 session = get_session()
                 batch = BatchStatement()
                 for query, params in self.statements:
-                    batch.add(query, params)
+                    # Preparar a query se for string
+                    if isinstance(query, str):
+                        prepared = session.prepare(query)
+                        batch.add(prepared, params)
+                    else:
+                        batch.add(query, params)
                 session.execute(batch)
         finally:
             if self.token:
                 _active_batch_context.reset(self.token)
+
 
 # AsyncBatchQuery para uso em contextos assíncronos
 class AsyncBatchQuery:
@@ -48,6 +61,7 @@ class AsyncBatchQuery:
         async with AsyncBatchQuery() as batch:
             ... # await Model.save_async() etc
     """
+
     def __init__(self):
         self.statements = []  # Lista de (query, params)
         self.token: Optional[Token] = None
@@ -72,10 +86,12 @@ class AsyncBatchQuery:
             if self.token:
                 _active_async_batch_context.reset(self.token)
 
+
 # Função utilitária para acessar o batch ativo
 def get_active_batch() -> Optional[BatchQuery]:
-    return _active_batch_context.get() 
+    return _active_batch_context.get()
+
 
 # Função utilitária para acessar o batch assíncrono ativo
 def get_active_async_batch() -> Optional[AsyncBatchQuery]:
-    return _active_async_batch_context.get() 
+    return _active_async_batch_context.get()
