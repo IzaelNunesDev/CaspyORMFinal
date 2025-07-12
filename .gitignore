@@ -210,6 +210,7 @@ caspy.toml
 *.tmp
 *.bak
 *.log
+tests/data/nyc_311.csv
 
 # Docker
 .dockerignore
