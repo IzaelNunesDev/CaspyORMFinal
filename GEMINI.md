@@ -74,3 +74,11 @@ The project is organized into the ORM library (`src/caspyorm`), a CLI tool (`src
 -   **Integration Tests:** Require a running Cassandra instance (provided by `docker-compose.yml`). They test the full end-to-end functionality, including database interactions, the migration system, and the CLI itself.
 -   The `tests/models.py` file defines a common `NYC311` model used in many tests, and `tests/data/nyc_311.csv` provides the data for it.
 -   The scripts in `scripts/` are used to download and import this test data.
+
+### 5. Packaging and Distribution
+
+The project uses `hatchling` as its build backend, configured via `pyproject.toml`. This modern approach handles project metadata, dependencies, and package structure.
+
+-   **`pyproject.toml`**: Defines project metadata (name, version, authors, description, license, classifiers), runtime dependencies, optional dependencies (e.g., `fastapi`, `async`), and entry points for the `caspy` CLI. It also specifies which files are included in the source distribution (`sdist`) and wheel (`wheel`) builds.
+-   **`MANIFEST.in`**: Specifies non-Python files to be included in the source distribution, such as `README.md`, `LICENSE`, and `pyproject.toml`. It also defines patterns for excluding development-related files and directories.
+-   **`setup.py`**: A minimal `setup.py` is present, primarily for compatibility, with the main build configuration managed by `pyproject.toml` and `hatchling`.
